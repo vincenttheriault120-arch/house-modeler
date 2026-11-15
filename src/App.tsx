@@ -118,6 +118,15 @@ export default function App() {
     setSuggesting(true);
   }
 
+  /** From the guide: add the step, then go straight to Claude's suggestions when plans and a key are ready. */
+  function addAndSuggest(add: () => void) {
+    add();
+    if (plans.plans.length > 0 && loadApiKey()) {
+      setNotice(null);
+      setSuggesting(true);
+    }
+  }
+
   const foundations = project.steps.flatMap((s) => (s.kind === 'foundation' ? [s] : []));
   const basement = foundations.find((s) => s.params.type === 'basement');
   const hasFloorOverBasement = !!basement && project.steps.some((s) => s.kind === 'floor' && s.params.supportId === basement.id);
@@ -135,20 +144,20 @@ export default function App() {
       {
         id: 'basement',
         title: 'Basement foundation',
-        detail: 'Outline, walls, footing and slab. Use “Suggest from plans” to pre-fill, then check each value.',
-        action: { label: 'Add the basement', run: () => addFoundation('basement') },
+        detail: 'Outline, walls, footing and slab. Claude reads your plans and suggests each value; you review before anything changes.',
+        action: { label: 'Add the basement', run: () => addAndSuggest(() => addFoundation('basement')) },
       },
       {
         id: 'slab',
         title: 'Garage slab on grade',
         detail: 'Frost walls and the slab beside the basement.',
-        action: { label: 'Add the garage slab', run: () => addFoundation('garage') },
+        action: { label: 'Add the garage slab', run: () => addAndSuggest(() => addFoundation('garage')) },
       },
       {
         id: 'floor0',
         title: 'Floor over the basement',
         detail: 'Sill plate, joists, beam and posts, subfloor. Sets the ground floor height.',
-        action: basement ? { label: 'Add the floor', run: () => addFloor(basement.id) } : undefined,
+        action: basement ? { label: 'Add the floor', run: () => addAndSuggest(() => addFloor(basement.id)) } : undefined,
       },
       { id: 'walls0', title: 'Ground floor walls', detail: 'Exterior walls, openings. Coming next.' },
       { id: 'floor1', title: 'First floor, with the cantilever', detail: 'Over the garage, overhanging at the back. Coming soon.' },
@@ -291,8 +300,8 @@ export default function App() {
           <PanelHeading>Build steps</PanelHeading>
           {project.steps.length === 0 && (
             <p className="text-sm leading-relaxed text-muted-foreground">
-              No steps yet. Start with the <strong className="text-foreground">foundation</strong>: its outline, walls,
-              footing and slab.
+              No steps yet, so the 3D view is empty. The model is built from these steps: follow the{' '}
+              <strong className="text-foreground">Guide</strong> above, starting with the basement.
             </p>
           )}
           <ol className="grid gap-1.5">
