@@ -1,4 +1,5 @@
 import type { UnitSystem } from '../units';
+import type { FloorParams } from './floor';
 import type { FoundationParams } from './foundation';
 
 /**
@@ -20,7 +21,12 @@ export interface FoundationStep extends StepBase {
   params: FoundationParams;
 }
 
-export type Step = FoundationStep;
+export interface FloorStep extends StepBase {
+  kind: 'floor';
+  params: FloorParams;
+}
+
+export type Step = FoundationStep | FloorStep;
 export type StepKind = Step['kind'];
 
 export interface Project {
@@ -33,6 +39,8 @@ export interface ViewSettings {
   units: UnitSystem;
   /** Grid cell size in mm. */
   gridSpacing: number;
+  /** Hide subfloors so the joists underneath can be seen. */
+  showSubfloor: boolean;
 }
 
 export function emptyProject(): Project {

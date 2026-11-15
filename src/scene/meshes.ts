@@ -6,6 +6,10 @@ export const MATERIALS: Record<MaterialId, { name: string; color: string; roughn
   concrete: { name: 'Concrete (wall)', color: '#b9bcbf', roughness: 0.9 },
   'concrete-footing': { name: 'Concrete (footing)', color: '#9a9ea3', roughness: 0.95 },
   slab: { name: 'Concrete (slab)', color: '#cfd2d4', roughness: 0.85 },
+  lumber: { name: 'Lumber', color: '#d9b77e', roughness: 0.8 },
+  'lumber-treated': { name: 'Treated lumber', color: '#a8a26a', roughness: 0.85 },
+  osb: { name: 'OSB / plywood', color: '#c9a66b', roughness: 0.9 },
+  steel: { name: 'Steel', color: '#5f6b75', roughness: 0.45 },
 };
 
 const materialCache = new Map<MaterialId, THREE.MeshStandardMaterial>();

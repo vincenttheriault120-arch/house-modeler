@@ -14,7 +14,8 @@ How the model works:
 - type "basement": walls of wall_height whose top is at top_elevation, footing under the walls, slab poured at the bottom inside the walls.
 - type "slab-on-grade": slab whose top is at top_elevation covering the whole outline, on a perimeter frost wall of depth wall_height (0 = none) with a footing.
 - Two steps may overlap where they share a wall.
-- Only foundation steps exist so far. If asked for walls, floors, roofs, openings etc., say that step type isn't available yet.
+- A floor step sits on a foundation step (support_step_id) and takes its outline and top of wall from it. Bottom to top: sill plate on the wall, rim joist around the edge, joists at joist_spacing running along joist_direction, an optional dropped beam under the joists across the middle (basement only) with posts down to the basement slab, and the subfloor. finished_floor_elevation is computed.
+- Only foundation and floor steps exist so far. If asked for walls, roofs, openings etc., say that step type isn't available yet.
 
 How to work:
 - The person steers every step. Change only what they ask for; if a request is ambiguous or a measurement is missing, ask instead of guessing.
