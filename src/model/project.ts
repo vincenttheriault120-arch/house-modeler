@@ -80,7 +80,11 @@ export function parseProject(json: string): Project {
   return {
     ...base,
     ...data,
-    steps: data.steps.map((s: Partial<Step>) => ({ visible: true, notes: '', level: '', ...s }) as Step),
+    steps: data.steps.map((s: Partial<Step>) => {
+      const step = { visible: true, notes: '', level: '', ...s } as Step;
+      if (step.kind === 'foundation') step.params = { ...step.params, type: step.params.type ?? 'basement' };
+      return step;
+    }),
   };
 }
 

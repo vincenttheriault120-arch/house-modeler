@@ -63,3 +63,34 @@ describe('foundation', () => {
     expect(Math.min(...wall1.outline.map((v) => v.x))).toBeCloseTo(0);
   });
 });
+
+describe('slab on grade and component fields', () => {
+  it('puts the slab on top of the frost walls', async () => {
+    const { applyFoundationType, foundationFields } = await import('./foundation');
+    const p = applyFoundationType(defaultFoundation(), 'slab-on-grade');
+    const parts = buildFoundation('g', 'Garage', p);
+    const slab = parts.find((c) => c.kind === 'slab')!;
+    const wall = parts.find((c) => c.kind === 'foundation-wall')!;
+    expect(slab.top).toBeCloseTo(p.topElevation);
+    expect(wall.top).toBeCloseTo(slab.bottom);
+    expect(wall.name).toBe('Garage · Frost wall 1');
+    // Editing wall 2's length changes side 2.
+    const w2 = parts.find((c) => c.id === 'g:wall:1')!;
+    const lengthField = foundationFields(p, w2)[0];
+    expect(lengthField.label).toContain('side 2');
+    expect(lengthField.apply(p, 5000).runs[1].length).toBe(5000);
+  });
+  it('maps sides to runs even when runs are split on a straight line', () => {
+    const p = defaultFoundation();
+    p.runs = [
+      { dir: 'right', length: 1000 },
+      { dir: 'right', length: 1000 },
+      { dir: 'up', length: 1000 },
+      { dir: 'left', length: 2000 },
+      { dir: 'down', length: 1000 },
+    ];
+    const walls = buildFoundation('s', 'F', p).filter((c) => c.kind === 'foundation-wall');
+    expect(walls).toHaveLength(4);
+    expect(walls.map((w) => w.runIndex)).toEqual([null, 2, 3, 4]);
+  });
+});

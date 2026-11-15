@@ -1,6 +1,6 @@
 import { LengthInput } from '../LengthInput';
 import { closingGap, type Direction, type Run } from '../model/geometry';
-import { validateFoundation, type FoundationParams } from '../model/foundation';
+import { applyFoundationType, validateFoundation, type FoundationParams, type FoundationType } from '../model/foundation';
 import type { FoundationStep } from '../model/types';
 import { formatLength, type UnitSystem } from '../units';
 import { OutlinePreview } from './OutlinePreview';
@@ -24,6 +24,7 @@ export function FoundationEditor({ step, units, onChange }: Props) {
   const setRun = (i: number, patch: Partial<Run>) =>
     set({ runs: p.runs.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
 
+  const isSlab = p.type === 'slab-on-grade';
   const gap = closingGap(p.runs);
   const isOpen = Math.hypot(gap.x, gap.y) > 0.5;
   const errors = validateFoundation(p);
@@ -44,6 +45,27 @@ export function FoundationEditor({ step, units, onChange }: Props) {
 
   return (
     <div className="editor">
+      <section>
+        <h3>Type</h3>
+        <div className="segmented full" role="group" aria-label="Foundation type">
+          {(
+            [
+              ['basement', 'Basement'],
+              ['slab-on-grade', 'Slab on grade'],
+            ] as [FoundationType, string][]
+          ).map(([t, label]) => (
+            <button key={t} className={p.type === t ? 'active' : undefined} aria-pressed={p.type === t} onClick={() => onChange(applyFoundationType(p, t))}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="help">
+          {isSlab
+            ? 'Concrete slab at ground level with a frost wall around the edge (no basement), e.g. a garage. Set depth to 0 for no frost wall.'
+            : 'Full-height walls with the floor slab poured at the bottom.'}
+        </p>
+      </section>
+
       <section>
         <h3>Outline (outside face of walls)</h3>
         <p className="help">
@@ -96,11 +118,11 @@ export function FoundationEditor({ step, units, onChange }: Props) {
       </section>
 
       <section>
-        <h3>Walls</h3>
+        <h3>{isSlab ? 'Frost walls' : 'Walls'}</h3>
         <div className="grid2">
           <LengthInput label="Thickness" valueMm={p.wallThickness} units={units} min={1} onChange={(v) => set({ wallThickness: v })} />
-          <LengthInput label="Height" valueMm={p.wallHeight} units={units} min={1} onChange={(v) => set({ wallHeight: v })} />
-          <LengthInput label="Top elevation (grade = 0)" valueMm={p.topElevation} units={units} onChange={(v) => set({ topElevation: v })} />
+          <LengthInput label={isSlab ? 'Depth (0 = none)' : 'Height'} valueMm={p.wallHeight} units={units} min={0} onChange={(v) => set({ wallHeight: v })} />
+          <LengthInput label={isSlab ? 'Top of slab (grade = 0)' : 'Top elevation (grade = 0)'} valueMm={p.topElevation} units={units} onChange={(v) => set({ topElevation: v })} />
           <div className="field">
             <span className="field-label">Bottom elevation</span>
             <span className="readout">{formatLength(p.topElevation - p.wallHeight, units)}</span>

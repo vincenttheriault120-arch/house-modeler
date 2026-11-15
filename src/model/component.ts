@@ -16,6 +16,8 @@ export interface Component {
   outline: Vec2[];
   bottom: number;
   top: number;
+  /** Which outline side (run) this piece sits on, if any. */
+  runIndex?: number | null;
   /** Short size summary for the components list, e.g. length × thickness × height. */
   dims: { label: string; mm: number }[];
 }

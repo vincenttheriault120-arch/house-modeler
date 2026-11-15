@@ -5,6 +5,7 @@ import { useViewSettings } from './settings';
 import { downloadBlob, safeFilename } from './download';
 import { exportGlb } from './scene/export';
 import { FoundationEditor } from './panels/FoundationEditor';
+import { foundationFields } from './model/foundation';
 import { formatLength, type UnitSystem } from './units';
 import { Viewport } from './Viewport';
 
@@ -23,6 +24,8 @@ export default function App() {
   const visibleSteps = new Set(project.steps.filter((s) => s.visible).map((s) => s.id));
   const components = allComponents.filter((c) => visibleSteps.has(c.stepId));
   const selectedStep = project.steps.find((s) => s.id === selectedStepId) ?? null;
+  const selectedComponent = allComponents.find((c) => c.id === selectedComponentId) ?? null;
+  const componentStep = selectedComponent ? project.steps.find((s) => s.id === selectedComponent.stepId) ?? null : null;
 
   function selectComponent(id: string | null) {
     setSelectedComponentId(id);
@@ -204,6 +207,32 @@ export default function App() {
               ×
             </button>
           </div>
+          {selectedComponent && componentStep && componentStep.id === selectedStep.id && (
+            <div className="selected-piece">
+              <div className="row">
+                <strong>{selectedComponent.name}</strong>
+                <div className="spacer" />
+                <button className="icon" aria-label="Deselect piece" onClick={() => setSelectedComponentId(null)}>
+                  ×
+                </button>
+              </div>
+              {foundationFields(componentStep.params, selectedComponent).map((f) => (
+                <div key={f.label}>
+                  <LengthInput
+                    label={f.label}
+                    valueMm={f.mm}
+                    units={units}
+                    min={f.min}
+                    onChange={(mm) =>
+                      dispatch({ type: 'update-foundation', id: componentStep.id, params: f.apply(componentStep.params, mm) })
+                    }
+                  />
+                  {f.scope && <span className="scope">{f.scope}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
           <label className="field">
             <span className="field-label">Level</span>
             <input

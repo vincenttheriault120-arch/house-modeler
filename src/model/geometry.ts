@@ -47,10 +47,48 @@ export function closingGap(runs: Run[]): Vec2 {
 
 /** Polygon corners from runs. If the runs end on the start point, that duplicate is dropped. */
 export function runsToPolygon(runs: Run[], start: Vec2 = { x: 0, y: 0 }): Vec2[] {
-  const pts = runsToPoints(runs, start);
-  const last = pts[pts.length - 1];
-  if (pts.length > 1 && Math.hypot(last.x - start.x, last.y - start.y) < 0.5) pts.pop();
-  return removeCollinear(pts);
+  return outlineWithSources(runs, start).poly;
+}
+
+/**
+ * Polygon corners plus, for each side (corner i → corner i+1), which run it
+ * came from. A side is `null` when it is the automatic closing side or when
+ * several runs merged into one straight side.
+ */
+export function outlineWithSources(runs: Run[], start: Vec2 = { x: 0, y: 0 }): { poly: Vec2[]; edgeRun: (number | null)[] } {
+  let poly = runsToPoints(runs, start);
+  let edgeRun: (number | null)[] = runs.map((_, i) => i);
+  const last = poly[poly.length - 1];
+  if (poly.length > 1 && Math.hypot(last.x - start.x, last.y - start.y) < 0.5) {
+    poly.pop();
+  } else {
+    edgeRun.push(null); // closing side
+  }
+  // Drop zero-length sides and corners that sit on a straight line.
+  let changed = true;
+  while (changed && poly.length > 3) {
+    changed = false;
+    const n = poly.length;
+    for (let i = 0; i < n; i++) {
+      const a = poly[(i - 1 + n) % n];
+      const b = poly[i];
+      const c = poly[(i + 1) % n];
+      const prevEdge = (i - 1 + n) % n;
+      const zeroPrev = Math.hypot(b.x - a.x, b.y - a.y) < 1e-6;
+      const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+      if (zeroPrev || Math.abs(cross) < 1e-6) {
+        // Merge side prevEdge (a→b) and side i (b→c) into a→c.
+        const merged = zeroPrev ? edgeRun[i] : edgeRun[prevEdge] === edgeRun[i] ? edgeRun[i] : null;
+        edgeRun = edgeRun.slice();
+        edgeRun[prevEdge] = merged;
+        edgeRun.splice(i, 1);
+        poly = poly.filter((_, k) => k !== i);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return { poly, edgeRun };
 }
 
 /** Positive when the corners go counter-clockwise. */
@@ -66,20 +104,6 @@ export function signedArea(poly: Vec2[]): number {
 
 export function ensureCCW(poly: Vec2[]): Vec2[] {
   return signedArea(poly) < 0 ? [...poly].reverse() : poly;
-}
-
-function removeCollinear(poly: Vec2[]): Vec2[] {
-  if (poly.length < 4) return poly;
-  const out: Vec2[] = [];
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[(i - 1 + poly.length) % poly.length];
-    const b = poly[i];
-    const c = poly[(i + 1) % poly.length];
-    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
-    const dup = Math.hypot(b.x - a.x, b.y - a.y) < 1e-6;
-    if (Math.abs(cross) > 1e-6 && !dup) out.push(b);
-  }
-  return out;
 }
 
 /**
