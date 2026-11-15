@@ -8,16 +8,7 @@ import { cn } from '@/lib/utils';
 import type { Project } from '../model/types';
 import type { UnitSystem } from '../units';
 import { explainError, runTurn, type ChatMessage } from './claude';
-
-const KEY_STORAGE = 'house-modeler:anthropic-key';
-
-function loadKey(): string {
-  try {
-    return localStorage.getItem(KEY_STORAGE) ?? '';
-  } catch {
-    return '';
-  }
-}
+import { forgetApiKey, loadApiKey, saveApiKey } from './apiKey';
 
 interface Entry {
   role: 'user' | 'assistant';
@@ -44,7 +35,7 @@ interface Props {
 }
 
 export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
-  const [apiKey, setApiKey] = useState(loadKey);
+  const [apiKey, setApiKey] = useState(loadApiKey);
   const [keyDraft, setKeyDraft] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -63,22 +54,14 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
   function saveKey() {
     const k = keyDraft.trim();
     if (!k) return;
-    try {
-      localStorage.setItem(KEY_STORAGE, k);
-    } catch {
-      // Not remembered, but usable for this visit.
-    }
+    saveApiKey(k);
     setApiKey(k);
     setKeyDraft('');
     setShowSettings(false);
   }
 
   function forgetKey() {
-    try {
-      localStorage.removeItem(KEY_STORAGE);
-    } catch {
-      // ignore
-    }
+    forgetApiKey();
     setApiKey('');
   }
 
