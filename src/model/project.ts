@@ -1,6 +1,7 @@
 import type { Component } from './component';
+import { buildFloor, defaultFloor, type FloorParams } from './floor';
 import { buildFoundation, defaultFoundation, type FoundationParams } from './foundation';
-import { emptyProject, type FoundationStep, type Project, type Step } from './types';
+import { emptyProject, type FloorStep, type FoundationStep, type Project, type Step } from './types';
 
 export function newId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -12,6 +13,8 @@ export type Action =
   | { type: 'add-foundation'; id: string }
   | { type: 'update-step'; id: string; patch: Partial<Omit<Step, 'id' | 'kind' | 'params'>> }
   | { type: 'update-foundation'; id: string; params: FoundationParams }
+  | { type: 'add-floor'; id: string; supportId: string }
+  | { type: 'update-floor'; id: string; params: FloorParams }
   | { type: 'delete-step'; id: string }
   | { type: 'move-step'; id: string; by: -1 | 1 }
   | { type: 'rename-project'; name: string }
@@ -32,6 +35,28 @@ export function reducer(state: Project, action: Action): Project {
       };
       return { ...state, steps: [...state.steps, step] };
     }
+    case 'add-floor': {
+      const support = state.steps.find((s) => s.id === action.supportId);
+      const step: FloorStep = {
+        id: action.id,
+        kind: 'floor',
+        label: support ? `Floor over ${support.label.toLowerCase()}` : 'Floor',
+        level: 'Ground floor',
+        visible: true,
+        notes: '',
+        params: defaultFloor(action.supportId, support?.kind === 'foundation' ? support.params : undefined),
+      };
+      // Insert right after the foundation it sits on, so the order reads bottom to top.
+      const i = state.steps.findIndex((s) => s.id === action.supportId);
+      const steps = [...state.steps];
+      steps.splice(i < 0 ? steps.length : i + 1, 0, step);
+      return { ...state, steps };
+    }
+    case 'update-floor':
+      return {
+        ...state,
+        steps: state.steps.map((s) => (s.id === action.id && s.kind === 'floor' ? { ...s, params: action.params } : s)),
+      };
     case 'update-step':
       return {
         ...state,
@@ -66,8 +91,15 @@ export function buildComponents(project: Project): Component[] {
   const out: Component[] = [];
   for (const step of project.steps) {
     if (step.kind === 'foundation') out.push(...buildFoundation(step.id, step.label, step.params));
+    else if (step.kind === 'floor') out.push(...buildFloor(step.id, step.label, step.params, supportOf(project, step)));
   }
   return out;
+}
+
+/** The foundation parameters a floor sits on, if that step still exists. */
+export function supportOf(project: Project, step: FloorStep): FoundationParams | undefined {
+  const s = project.steps.find((x) => x.id === step.params.supportId);
+  return s && s.kind === 'foundation' ? s.params : undefined;
 }
 
 /** Parse a saved project file. Throws with a readable message if it isn't one. */
@@ -83,6 +115,7 @@ export function parseProject(json: string): Project {
     steps: data.steps.map((s: Partial<Step>) => {
       const step = { visible: true, notes: '', level: '', ...s } as Step;
       if (step.kind === 'foundation') step.params = { ...step.params, type: step.params.type ?? 'basement' };
+      if (step.kind === 'floor') step.params = { ...defaultFloor(step.params.supportId), ...step.params };
       return step;
     }),
   };

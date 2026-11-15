@@ -159,3 +159,43 @@ export function bandSegments(outer: Vec2[], inner: Vec2[]): Vec2[][] {
   }
   return segs;
 }
+
+/**
+ * Where a straight line crosses a polygon: for the line `axis = c`
+ * (axis 'x' means the vertical line x = c), the [from, to] intervals along the
+ * other axis that lie inside the polygon, in increasing order.
+ */
+export function scanIntervals(poly: Vec2[], axis: 'x' | 'y', c: number): [number, number][] {
+  const other = axis === 'x' ? 'y' : 'x';
+  const hits: number[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    // Half-open rule so a line through a vertex is counted once.
+    if ((a[axis] <= c && b[axis] > c) || (b[axis] <= c && a[axis] > c)) {
+      const t = (c - a[axis]) / (b[axis] - a[axis]);
+      hits.push(a[other] + t * (b[other] - a[other]));
+    }
+  }
+  hits.sort((p, q) => p - q);
+  const out: [number, number][] = [];
+  for (let i = 0; i + 1 < hits.length; i += 2) if (hits[i + 1] - hits[i] > 1e-6) out.push([hits[i], hits[i + 1]]);
+  return out;
+}
+
+/** Axis-aligned bounds of a polygon. */
+export function bounds(poly: Vec2[]): { minX: number; maxX: number; minY: number; maxY: number } {
+  const xs = poly.map((p) => p.x);
+  const ys = poly.map((p) => p.y);
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+/** A rectangle as a counter-clockwise outline. */
+export function rect(x0: number, y0: number, x1: number, y1: number): Vec2[] {
+  return [
+    { x: x0, y: y0 },
+    { x: x1, y: y0 },
+    { x: x1, y: y1 },
+    { x: x0, y: y1 },
+  ];
+}

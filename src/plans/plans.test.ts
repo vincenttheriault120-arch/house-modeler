@@ -87,3 +87,37 @@ describe('withNext', () => {
     expect(g.map((x) => x.status)).toEqual(['done', 'next', 'todo', 'soon']);
   });
 });
+
+describe('floorSuggestionToDraft', () => {
+  it('reads nominal sizes and leaves unreadable ones alone', async () => {
+    const { defaultFloor } = await import('../model/floor');
+    const { floorSuggestionToDraft } = await import('./suggest');
+    const cur = defaultFloor('b');
+    const s = {
+      summary: '',
+      joist_direction: 'x' as const,
+      joist_direction_source: 'section',
+      beam: true,
+      beam_source: 'section',
+      joist_depth: L('11 1/4"'),
+      joist_width: L('1 1/2"'),
+      joist_spacing: L('16"'),
+      rim_thickness: L('1 1/2"'),
+      sill_width: L('5 1/2"'),
+      sill_thickness: L('1 1/2"'),
+      beam_width: L('4 1/2"'),
+      beam_depth: L('11 1/4"'),
+      beam_offset: L('0'),
+      post_spacing: L(null),
+      post_size: L('3 1/2"'),
+      subfloor_thickness: L('5/8"'),
+    };
+    const { params, include } = floorSuggestionToDraft(s, cur, 'imperial');
+    expect(params.joistDepth).toBeCloseTo(11.25 * 25.4);
+    expect(include.joistDepth).toBe(true);
+    expect(include.joistSpacing).toBe(false);
+    expect(include.joistDirection).toBe(true);
+    expect(include.postSpacing).toBe(false);
+    expect(params.postSpacing).toBe(cur.postSpacing);
+  });
+});

@@ -1,6 +1,6 @@
 import type { Vec2 } from './geometry';
 
-export type MaterialId = 'concrete' | 'concrete-footing' | 'slab';
+export type MaterialId = 'concrete' | 'concrete-footing' | 'slab' | 'lumber' | 'lumber-treated' | 'osb' | 'steel';
 
 /**
  * A built piece of the house: a vertical prism (plan outline extruded
@@ -11,7 +11,7 @@ export interface Component {
   id: string;
   stepId: string;
   name: string;
-  kind: 'foundation-wall' | 'footing' | 'slab';
+  kind: 'foundation-wall' | 'footing' | 'slab' | 'sill' | 'rim-joist' | 'joist' | 'beam' | 'post' | 'subfloor';
   material: MaterialId;
   outline: Vec2[];
   bottom: number;

@@ -68,6 +68,11 @@ export function validateFoundation(p: FoundationParams): string[] {
   return errors;
 }
 
+/** The foundation's outer outline (outside face), with which run each edge came from. */
+export function buildFoundationOutline(p: FoundationParams) {
+  return outlineWithSources(p.runs, p.origin);
+}
+
 export function buildFoundation(stepId: string, label: string, p: FoundationParams): Component[] {
   if (validateFoundation(p).length) return [];
   const type = p.type ?? 'basement';

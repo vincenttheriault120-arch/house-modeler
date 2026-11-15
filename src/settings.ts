@@ -3,7 +3,7 @@ import type { ViewSettings } from './model/types';
 
 const KEY = 'house-modeler:view-settings';
 
-const DEFAULTS: ViewSettings = { units: 'imperial', gridSpacing: 304.8 };
+const DEFAULTS: ViewSettings = { units: 'imperial', gridSpacing: 304.8, showSubfloor: true };
 
 function load(): ViewSettings {
   try {

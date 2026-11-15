@@ -27,6 +27,8 @@ import { cn } from '@/lib/utils';
 import { LengthInput } from './LengthInput';
 import { buildComponents, loadAutosave, newId, parseProject, reducer, saveAutosave } from './model/project';
 import { foundationFields } from './model/foundation';
+import { floorFields } from './model/floor';
+import { FloorEditor } from './panels/FloorEditor';
 import { useViewSettings } from './settings';
 import { useTheme } from './theme';
 import { downloadBlob, safeFilename } from './download';
@@ -41,6 +43,7 @@ import { GuidedSteps, withNext } from './panels/GuidedSteps';
 import { PlansSection } from './plans/PlansSection';
 import { PlanViewer } from './plans/PlanViewer';
 import { SuggestDialog } from './plans/SuggestDialog';
+import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import type { PlanMeta } from './plans/store';
 import { usePlans } from './plans/usePlans';
 
@@ -68,7 +71,9 @@ export default function App() {
 
   const allComponents = useMemo(() => buildComponents(project), [project]);
   const visibleSteps = new Set(project.steps.filter((s) => s.visible).map((s) => s.id));
-  const components = allComponents.filter((c) => visibleSteps.has(c.stepId));
+  const components = allComponents.filter(
+    (c) => visibleSteps.has(c.stepId) && (settings.showSubfloor || c.kind !== 'subfloor'),
+  );
   const selectedStep = project.steps.find((s) => s.id === selectedStepId) ?? null;
   const selectedComponent = allComponents.find((c) => c.id === selectedComponentId) ?? null;
   const componentStep = selectedComponent ? (project.steps.find((s) => s.id === selectedComponent.stepId) ?? null) : null;
@@ -92,6 +97,13 @@ export default function App() {
     setViewKey((k) => k + 1);
   }
 
+  function addFloor(supportId: string) {
+    const id = newId();
+    dispatch({ type: 'add-floor', id, supportId });
+    setSelectedStepId(id);
+    setSelectedComponentId(null);
+  }
+
   function startSuggest() {
     if (!loadApiKey()) {
       setNotice('Claude needs your API key first. Add it in the Ask Claude panel (it stays in this browser), then try again.');
@@ -106,7 +118,12 @@ export default function App() {
     setSuggesting(true);
   }
 
-  const foundations = project.steps.filter((s) => s.kind === 'foundation');
+  const foundations = project.steps.flatMap((s) => (s.kind === 'foundation' ? [s] : []));
+  const basement = foundations.find((s) => s.params.type === 'basement');
+  const hasFloorOverBasement = !!basement && project.steps.some((s) => s.kind === 'floor' && s.params.supportId === basement.id);
+  /** Foundation to put a new floor on: the selected one, else the basement, else the first. */
+  const floorTarget =
+    (selectedStep?.kind === 'foundation' ? selectedStep : undefined) ?? basement ?? foundations[0];
   const guides = withNext(
     [
       {
@@ -127,8 +144,13 @@ export default function App() {
         detail: 'Frost walls and the slab beside the basement.',
         action: { label: 'Add the garage slab', run: () => addFoundation('garage') },
       },
-      { id: 'floor0', title: 'Floor over the basement', detail: 'Joists, beam and subfloor. Coming next.' },
-      { id: 'walls0', title: 'Ground floor walls', detail: 'Exterior walls, openings. Coming soon.' },
+      {
+        id: 'floor0',
+        title: 'Floor over the basement',
+        detail: 'Sill plate, joists, beam and posts, subfloor. Sets the ground floor height.',
+        action: basement ? { label: 'Add the floor', run: () => addFloor(basement.id) } : undefined,
+      },
+      { id: 'walls0', title: 'Ground floor walls', detail: 'Exterior walls, openings. Coming next.' },
       { id: 'floor1', title: 'First floor, with the cantilever', detail: 'Over the garage, overhanging at the back. Coming soon.' },
       { id: 'roof', title: 'Roofs and the green roof', detail: 'Including the mini green roof over the garage door. Coming soon.' },
     ],
@@ -136,7 +158,7 @@ export default function App() {
       plans: plans.plans.length > 0,
       basement: foundations.some((s) => s.params.type === 'basement'),
       slab: foundations.some((s) => s.params.type === 'slab-on-grade'),
-      floor0: 'soon',
+      floor0: hasFloorOverBasement,
       walls0: 'soon',
       floor1: 'soon',
       roof: 'soon',
@@ -292,6 +314,7 @@ export default function App() {
                     <span className="truncate text-xs text-muted-foreground">
                       {s.level}
                       {s.kind === 'foundation' && ` · ${s.params.type === 'slab-on-grade' ? 'Slab on grade' : 'Basement'}`}
+                      {s.kind === 'floor' && ' · Floor system'}
                     </span>
                   </span>
                 </button>
@@ -310,6 +333,11 @@ export default function App() {
           <Button variant={project.steps.length ? 'outline' : 'default'} onClick={() => addFoundation()}>
             <Plus /> Add foundation
           </Button>
+          {floorTarget && (
+            <Button variant="outline" onClick={() => addFloor(floorTarget.id)}>
+              <Plus /> Add floor on {floorTarget.label}
+            </Button>
+          )}
         </section>
 
         <Separator />
@@ -354,6 +382,16 @@ export default function App() {
             min={10}
             onChange={(mm) => setSettings({ ...settings, gridSpacing: mm })}
           />
+          <label className="grid cursor-pointer grid-cols-[auto_1fr] items-center gap-x-2 text-sm">
+            <input
+              type="checkbox"
+              className="size-4 accent-primary"
+              checked={settings.showSubfloor}
+              onChange={(e) => setSettings({ ...settings, showSubfloor: e.target.checked })}
+            />
+            <span>Show subfloors</span>
+            <span className="col-start-2 text-xs text-muted-foreground">Untick to see the joists</span>
+          </label>
           <Button variant="outline" size="sm" onClick={() => setViewKey((k) => k + 1)}>
             <RotateCcw /> Reset camera
           </Button>
@@ -408,19 +446,32 @@ export default function App() {
                   <X />
                 </Button>
               </div>
-              {foundationFields(componentStep.params, selectedComponent).map((f) => (
-                <LengthInput
-                  key={f.label}
-                  label={f.label}
-                  hint={f.scope}
-                  valueMm={f.mm}
-                  units={units}
-                  min={f.min}
-                  onChange={(mm) =>
-                    dispatch({ type: 'update-foundation', id: componentStep.id, params: f.apply(componentStep.params, mm) })
-                  }
-                />
-              ))}
+              {componentStep.kind === 'foundation' &&
+                foundationFields(componentStep.params, selectedComponent).map((f) => (
+                  <LengthInput
+                    key={f.label}
+                    label={f.label}
+                    hint={f.scope}
+                    valueMm={f.mm}
+                    units={units}
+                    min={f.min}
+                    onChange={(mm) =>
+                      dispatch({ type: 'update-foundation', id: componentStep.id, params: f.apply(componentStep.params, mm) })
+                    }
+                  />
+                ))}
+              {componentStep.kind === 'floor' &&
+                floorFields(componentStep.params, selectedComponent).map((f) => (
+                  <LengthInput
+                    key={f.label}
+                    label={f.label}
+                    hint={f.scope}
+                    valueMm={f.mm}
+                    units={units}
+                    min={f.min}
+                    onChange={(mm) => dispatch({ type: 'update-floor', id: componentStep.id, params: f.apply(componentStep.params, mm) })}
+                  />
+                ))}
             </div>
           )}
 
@@ -443,11 +494,21 @@ export default function App() {
             {notice && <p className="rounded-md bg-muted px-3 py-2 text-xs leading-relaxed">{notice}</p>}
           </div>
 
-          <FoundationEditor
-            step={selectedStep}
-            units={units}
-            onChange={(params) => dispatch({ type: 'update-foundation', id: selectedStep.id, params })}
-          />
+          {selectedStep.kind === 'foundation' && (
+            <FoundationEditor
+              step={selectedStep}
+              units={units}
+              onChange={(params) => dispatch({ type: 'update-foundation', id: selectedStep.id, params })}
+            />
+          )}
+          {selectedStep.kind === 'floor' && (
+            <FloorEditor
+              project={project}
+              step={selectedStep}
+              units={units}
+              onChange={(params) => dispatch({ type: 'update-floor', id: selectedStep.id, params })}
+            />
+          )}
 
           <Separator />
 
@@ -488,7 +549,7 @@ export default function App() {
         </aside>
       )}
 
-      {suggesting && selectedStep && (
+      {suggesting && selectedStep?.kind === 'foundation' && (
         <SuggestDialog
           apiKey={loadApiKey()}
           plans={plans.plans}
@@ -499,6 +560,17 @@ export default function App() {
             dispatch({ type: 'update-foundation', id: selectedStep.id, params });
             setViewKey((k) => k + 1);
           }}
+          onClose={() => setSuggesting(false)}
+        />
+      )}
+      {suggesting && selectedStep?.kind === 'floor' && (
+        <FloorSuggestDialog
+          apiKey={loadApiKey()}
+          plans={plans.plans}
+          project={project}
+          step={selectedStep}
+          units={units}
+          onApply={(params) => dispatch({ type: 'update-floor', id: selectedStep.id, params })}
           onClose={() => setSuggesting(false)}
         />
       )}

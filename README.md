@@ -13,6 +13,7 @@ A browser tool for modeling a house **step by step** in 2D and 3D: foundation, t
 - Autosaves in your browser; **Save to file** / **Open…** for a `.house.json` project file
 - **Export to Blender:** downloads a `.glb`. In Blender: File → Import → glTF 2.0. Units are metres, pieces are named and grouped by step.
 - **Ask Claude:** a chat panel that can add and change steps for you ("make the garage a slab on grade, 18' 1\" by 39' 1 1/2\""). Every change can be undone with one click. Uses your own Anthropic API key, stored only in your browser (create one at console.anthropic.com; pay per use).
+- **Floor step:** the floor system on top of a foundation: sill plate, rim joist, joists (size, spacing, direction), a dropped beam with steel posts, and the subfloor. It follows the foundation's outline and height and shows the finished ground-floor elevation. Untick *Show subfloors* to see the joists.
 - **Plans:** add your 2D plan PDFs, say what each one shows, and view them in the app. They are stored in your browser only, never in the project file or this repository.
 - **Guide:** a checklist of the build order (plans, basement, garage slab, then floors, walls and roofs as they arrive) with a shortcut to the next step.
 - **Suggest from plans:** Claude reads the plans you pick and proposes the foundation's outline and measurements. You see each value next to the current one, with where it came from and whether it was read from a dimension or estimated, edit it, and tick only what you want to apply.

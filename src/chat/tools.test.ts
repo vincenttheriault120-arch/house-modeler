@@ -18,6 +18,7 @@ describe('chat tools', () => {
     });
     expect(r.isError).toBe(false);
     const s = r.project.steps[0];
+    if (s.kind !== 'foundation') throw new Error('expected foundation');
     expect(s.label).toBe('Garage');
     expect(s.params.type).toBe('slab-on-grade');
     expect(s.params.origin.x).toBeCloseTo(20 * 304.8 + 25.4);

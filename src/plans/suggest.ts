@@ -3,7 +3,8 @@ import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import * as z from 'zod/v4';
 import { MODEL } from '../chat/claude';
 import { describeProject } from '../chat/tools';
-import type { FoundationStep, Project } from '../model/types';
+import type { FloorParams } from '../model/floor';
+import type { FloorStep, FoundationStep, Project, Step } from '../model/types';
 import type { FoundationParams } from '../model/foundation';
 import type { Run } from '../model/geometry';
 import { parseLength, type UnitSystem } from '../units';
@@ -58,17 +59,7 @@ function toBase64(buf: ArrayBuffer): string {
   return btoa(s);
 }
 
-export async function suggestFoundation(opts: {
-  apiKey: string;
-  plans: PlanMeta[];
-  project: Project;
-  step: FoundationStep;
-  units: UnitSystem;
-  signal?: AbortSignal;
-}): Promise<FoundationSuggestion> {
-  const { apiKey, plans, project, step, units, signal } = opts;
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-
+async function planDocuments(plans: PlanMeta[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
   for (const plan of plans) {
     const data = await getPlanData(plan.id);
@@ -80,34 +71,132 @@ export async function suggestFoundation(opts: {
       title: `${plan.name} (${kind})`,
     });
   }
-  content.push({
+  return content;
+}
+
+async function ask<T extends z.ZodType>(opts: {
+  apiKey: string;
+  system: string;
+  content: Anthropic.Beta.BetaContentBlockParam[];
+  schema: T;
+  signal?: AbortSignal;
+}): Promise<z.infer<T>> {
+  const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
+  const response = await client.beta.messages.parse(
+    {
+      model: MODEL,
+      max_tokens: 16000,
+      system: opts.system,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high', format: betaZodOutputFormat(opts.schema) },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      messages: [{ role: 'user', content: opts.content }],
+    },
+    { signal: opts.signal },
+  );
+  if (response.stop_reason === 'refusal') throw new Error('Claude declined to read these plans.');
+  if (response.stop_reason === 'max_tokens') throw new Error('The answer was cut off. Try again with fewer plans selected.');
+  if (!response.parsed_output) throw new Error("Claude's answer couldn't be read. Try again.");
+  return response.parsed_output as z.infer<T>;
+}
+
+function request(project: Project, step: Step, units: UnitSystem, what: string): Anthropic.Beta.BetaContentBlockParam {
+  return {
     type: 'text',
     text: `Units: ${units === 'imperial' ? 'feet-inches' : 'millimetres'}.
 
 Current project:
 ${describeProject(project, units)}
 
-Propose the measurements for the foundation step "${step.label}" (step_id ${step.id}, level "${step.level}") from the attached plans.`,
-  });
+Propose the measurements for the ${what} step "${step.label}" (step_id ${step.id}, level "${step.level}") from the attached plans.`,
+  };
+}
 
-  const response = await client.beta.messages.parse(
-    {
-      model: MODEL,
-      max_tokens: 16000,
-      system: SYSTEM,
-      thinking: { type: 'adaptive' },
-      output_config: { effort: 'high', format: betaZodOutputFormat(FoundationSuggestion) },
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      messages: [{ role: 'user', content }],
-    },
-    { signal },
-  );
+export async function suggestFoundation(opts: {
+  apiKey: string;
+  plans: PlanMeta[];
+  project: Project;
+  step: FoundationStep;
+  units: UnitSystem;
+  signal?: AbortSignal;
+}): Promise<FoundationSuggestion> {
+  const content = await planDocuments(opts.plans);
+  content.push(request(opts.project, opts.step, opts.units, 'foundation'));
+  return ask({ apiKey: opts.apiKey, system: SYSTEM, content, schema: FoundationSuggestion, signal: opts.signal });
+}
 
-  if (response.stop_reason === 'refusal') throw new Error('Claude declined to read these plans.');
-  if (response.stop_reason === 'max_tokens') throw new Error('The answer was cut off. Try again with fewer plans selected.');
-  if (!response.parsed_output) throw new Error("Claude's answer couldn't be read. Try again.");
-  return response.parsed_output;
+export const FloorSuggestion = z.object({
+  summary: z.string().describe('Two or three plain sentences: what was found, and anything the person should double-check.'),
+  joist_direction: z.enum(['x', 'y']).describe("'y' = joists run front to back (up the page), 'x' = left to right."),
+  joist_direction_source: z.string(),
+  beam: z.boolean().describe('Whether there is a dropped beam (poutre) under the joists.'),
+  beam_source: z.string(),
+  joist_depth: Length,
+  joist_width: Length,
+  joist_spacing: Length,
+  rim_thickness: Length,
+  sill_width: Length,
+  sill_thickness: Length,
+  beam_width: Length,
+  beam_depth: Length,
+  beam_offset: Length.describe('Beam centre measured from the outside face of the foundation (left side for front-to-back joists, front side for left-to-right joists). "0" = middle.'),
+  post_spacing: Length,
+  post_size: Length,
+  subfloor_thickness: Length,
+});
+export type FloorSuggestion = z.infer<typeof FloorSuggestion>;
+
+const FLOOR_SYSTEM = `${SYSTEM}
+
+This request is for a FLOOR step: the floor system sitting on top of a foundation (sill plate on the wall, rim joist, joists, optional dropped beam with steel posts, subfloor). Look for it on sections ("coupe"), the foundation plan, and notes: "solives" = joists (e.g. "solives 2x10 @ 16\" c/c"), "poutre" = beam (e.g. "3-2x10"), "colonne" / "poteau" = post, "lisse" / "lisse d'assise" = sill plate, "solive de rive" = rim joist, "contreplaqué" / "sous-plancher" = subfloor. Nominal lumber: 2x10 is 1 1/2" x 9 1/4", 2x8 is 1 1/2" x 7 1/4", 2x12 is 1 1/2" x 11 1/4", 2x6 sill is 5 1/2" wide. Joists run in the direction they span, usually across the shorter dimension, bearing on the beam.`;
+
+export async function suggestFloor(opts: {
+  apiKey: string;
+  plans: PlanMeta[];
+  project: Project;
+  step: FloorStep;
+  units: UnitSystem;
+  signal?: AbortSignal;
+}): Promise<FloorSuggestion> {
+  const content = await planDocuments(opts.plans);
+  content.push(request(opts.project, opts.step, opts.units, 'floor'));
+  return ask({ apiKey: opts.apiKey, system: FLOOR_SYSTEM, content, schema: FloorSuggestion, signal: opts.signal });
+}
+
+export const FLOOR_ROWS: { key: Exclude<keyof FloorParams, 'supportId' | 'joistDirection' | 'beam'>; field: keyof FloorSuggestion; label: string }[] = [
+  { key: 'joistDepth', field: 'joist_depth', label: 'Joist depth' },
+  { key: 'joistWidth', field: 'joist_width', label: 'Joist width' },
+  { key: 'joistSpacing', field: 'joist_spacing', label: 'Joist spacing (c/c)' },
+  { key: 'rimThickness', field: 'rim_thickness', label: 'Rim thickness' },
+  { key: 'sillWidth', field: 'sill_width', label: 'Sill width' },
+  { key: 'sillThickness', field: 'sill_thickness', label: 'Sill thickness' },
+  { key: 'beamWidth', field: 'beam_width', label: 'Beam width' },
+  { key: 'beamDepth', field: 'beam_depth', label: 'Beam depth' },
+  { key: 'beamOffset', field: 'beam_offset', label: 'Beam position (0 = middle)' },
+  { key: 'postSpacing', field: 'post_spacing', label: 'Post spacing' },
+  { key: 'postSize', field: 'post_size', label: 'Post size' },
+  { key: 'subfloorThickness', field: 'subfloor_thickness', label: 'Subfloor' },
+];
+
+/** Floor suggestion → draft params and pre-ticked changes (nothing applied). */
+export function floorSuggestionToDraft(
+  s: FloorSuggestion,
+  current: FloorParams,
+  units: UnitSystem,
+): { params: FloorParams; include: Record<string, boolean> } {
+  const params: FloorParams = { ...current, joistDirection: s.joist_direction, beam: s.beam };
+  const include: Record<string, boolean> = {
+    joistDirection: s.joist_direction !== current.joistDirection,
+    beam: s.beam !== current.beam,
+  };
+  for (const row of FLOOR_ROWS) {
+    let mm = toMm((s[row.field] as FloorSuggestion['joist_depth']).value, units);
+    if (mm !== null && mm < 0) mm = null;
+    if (mm !== null) params[row.key] = mm;
+    include[row.key] = mm !== null && Math.abs(mm - current[row.key]) > 0.5;
+  }
+  return { params, include };
 }
 
 export type LengthKey = 'wallThickness' | 'wallHeight' | 'topElevation' | 'footingWidth' | 'footingThickness' | 'slabThickness';
