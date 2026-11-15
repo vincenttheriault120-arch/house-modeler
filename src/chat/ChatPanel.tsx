@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { Check, SendHorizontal, Settings, Sparkles, Square, Undo2, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 import type { Project } from '../model/types';
 import type { UnitSystem } from '../units';
 import { explainError, runTurn, type ChatMessage } from './claude';
@@ -130,33 +136,42 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
   const needsKey = !apiKey || showSettings;
 
   return (
-    <aside className="chat" aria-label="Claude chat">
-      <div className="chat-head">
-        <strong>Ask Claude</strong>
-        <div className="spacer" />
+    <aside
+      aria-label="Claude chat"
+      className="absolute inset-y-3 right-3 z-10 flex w-[min(24rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-xl border bg-background shadow-xl"
+    >
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <Sparkles className="size-4" />
+        <span className="text-sm font-semibold">Ask Claude</span>
+        <div className="flex-1" />
         {apiKey && (
-          <button className="icon" title="Chat settings" aria-label="Chat settings" onClick={() => setShowSettings((s) => !s)}>
-            ⚙
-          </button>
+          <Button variant="ghost" size="icon" className="size-8" aria-label="Chat settings" onClick={() => setShowSettings((s) => !s)}>
+            <Settings />
+          </Button>
         )}
-        <button className="icon" aria-label="Close chat" onClick={onClose}>
-          ×
-        </button>
+        <Button variant="ghost" size="icon" className="size-8" aria-label="Close chat" onClick={onClose}>
+          <X />
+        </Button>
       </div>
 
       {needsKey ? (
-        <div className="chat-setup">
-          <p>
+        <div className="grid gap-3 p-4 text-sm">
+          <p className="leading-relaxed">
             The chat uses your own Anthropic API key. Create one at{' '}
-            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
+            <a className="underline underline-offset-4" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
               console.anthropic.com
             </a>{' '}
             (pay per use; a typical request costs a few cents).
           </p>
-          <p className="help">Your key is stored only in this browser. It is never saved to your project file or the repository.</p>
-          <label className="field">
-            <span className="field-label">API key</span>
-            <input
+          <p className="text-xs text-muted-foreground">
+            Your key is stored only in this browser. It is never saved to your project file or the repository.
+          </p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="api-key" className="text-xs font-normal text-muted-foreground">
+              API key
+            </Label>
+            <Input
+              id="api-key"
               type="password"
               autoComplete="off"
               placeholder="sk-ant-…"
@@ -164,26 +179,30 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
               onChange={(e) => setKeyDraft(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && saveKey()}
             />
-          </label>
-          <div className="row">
-            <button className="primary" onClick={saveKey} disabled={!keyDraft.trim()}>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={saveKey} disabled={!keyDraft.trim()}>
               Save key
-            </button>
-            {apiKey && <button onClick={() => setShowSettings(false)}>Cancel</button>}
+            </Button>
             {apiKey && (
-              <button className="danger" onClick={forgetKey}>
+              <Button size="sm" variant="outline" onClick={() => setShowSettings(false)}>
+                Cancel
+              </Button>
+            )}
+            {apiKey && (
+              <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={forgetKey}>
                 Forget key
-              </button>
+              </Button>
             )}
           </div>
         </div>
       ) : (
         <>
-          <div className="chat-log" ref={scroller}>
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-3" ref={scroller}>
             {entries.length === 0 && (
-              <div className="chat-empty">
-                <p>Describe a change and Claude will make it. For example:</p>
-                <ul>
+              <div className="text-sm text-muted-foreground">
+                <p className="mb-2">Describe a change and Claude will make it. For example:</p>
+                <ul className="grid list-disc gap-1 pl-5">
                   <li>"Make the garage a slab on grade, 18' 1" by 39' 1 1/2", starting 20' 1" to the right."</li>
                   <li>"Change the basement walls to 10" thick."</li>
                   <li>"What's the top elevation of the basement slab?"</li>
@@ -191,26 +210,37 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
               </div>
             )}
             {entries.map((e, i) => (
-              <div key={i} className={`bubble ${e.role} ${e.error ? 'error' : ''}`}>
-                {e.text || (busy && i === entries.length - 1 ? <span className="typing">Thinking…</span> : null)}
+              <div
+                key={i}
+                className={cn(
+                  'max-w-[92%] rounded-lg px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap',
+                  e.role === 'user' ? 'self-end bg-primary text-primary-foreground' : 'self-start bg-muted',
+                  e.error && 'bg-destructive/10 text-destructive',
+                )}
+              >
+                {e.text || (busy && i === entries.length - 1 ? <span className="text-muted-foreground">Thinking…</span> : null)}
                 {e.actions.length > 0 && (
-                  <ul className="actions">
+                  <ul className="mt-1.5 grid gap-0.5 text-xs text-success">
                     {e.actions.map((a, j) => (
-                      <li key={j}>✓ {a}</li>
+                      <li key={j} className="flex items-center gap-1">
+                        <Check className="size-3" /> {a}
+                      </li>
                     ))}
                   </ul>
                 )}
                 {e.before && !(busy && i === entries.length - 1) && (
-                  <button className="link" disabled={e.undone} onClick={() => undo(i)}>
+                  <Button variant="link" size="sm" className="mt-1 h-auto p-0 text-xs" disabled={e.undone} onClick={() => undo(i)}>
+                    <Undo2 className="size-3" />
                     {e.undone ? 'Changes undone' : 'Undo these changes'}
-                  </button>
+                  </Button>
                 )}
               </div>
             ))}
           </div>
-          <div className="chat-input">
-            <textarea
+          <div className="flex items-end gap-2 border-t p-3">
+            <Textarea
               rows={2}
+              className="min-h-0 resize-none"
               placeholder="Ask or describe a change…"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -222,11 +252,13 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
               }}
             />
             {busy ? (
-              <button onClick={() => abort.current?.abort()}>Stop</button>
+              <Button variant="outline" onClick={() => abort.current?.abort()}>
+                <Square /> Stop
+              </Button>
             ) : (
-              <button className="primary" onClick={send} disabled={!draft.trim()}>
-                Send
-              </button>
+              <Button onClick={send} disabled={!draft.trim()} aria-label="Send">
+                <SendHorizontal />
+              </Button>
             )}
           </div>
         </>

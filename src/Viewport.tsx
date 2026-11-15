@@ -6,6 +6,7 @@ import type { Component } from './model/component';
 import { componentGeometry, materialFor } from './scene/meshes';
 
 interface Props {
+  dark?: boolean;
   components: Component[];
   /** Grid cell size in mm. */
   gridSpacing: number;
@@ -17,7 +18,7 @@ interface Props {
  * The 3D view. Scene units are metres. Y is up and grade is at 0. To reset
  * the camera, remount this component.
  */
-export function Viewport({ components, gridSpacing, selectedId, onSelect }: Props) {
+export function Viewport({ dark = false, components, gridSpacing, selectedId, onSelect }: Props) {
   const cell = gridSpacing / 1000;
   const view = useMemo(() => homeView(components), [components.length === 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -26,7 +27,7 @@ export function Viewport({ components, gridSpacing, selectedId, onSelect }: Prop
       camera={{ position: view.camera, fov: 45, near: 0.05, far: 2000 }}
       onPointerMissed={() => onSelect(null)}
     >
-      <color attach="background" args={['#eef1f4']} />
+      <color attach="background" args={[dark ? '#1b1f26' : '#eef1f4']} />
       <hemisphereLight args={['#ffffff', '#b8c0c8', 1.3]} />
       <directionalLight position={[10, 20, 8]} intensity={1.6} />
       <directionalLight position={[-12, 8, -10]} intensity={0.5} />
@@ -44,8 +45,8 @@ export function Viewport({ components, gridSpacing, selectedId, onSelect }: Prop
         args={[200, 200]}
         cellSize={cell}
         sectionSize={cell * 10}
-        cellColor="#c3cad3"
-        sectionColor="#8e99a6"
+        cellColor={dark ? '#2c333d' : '#c3cad3'}
+        sectionColor={dark ? '#4a5563' : '#8e99a6'}
         cellThickness={0.6}
         sectionThickness={1.1}
         fadeDistance={120}

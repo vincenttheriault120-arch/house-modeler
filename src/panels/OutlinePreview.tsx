@@ -20,11 +20,11 @@ export function OutlinePreview({ runs, origin }: { runs: Run[]; origin: Vec2 }) 
   const fontSize = span * 0.055;
 
   return (
-    <svg className="outline-preview" viewBox={view} role="img" aria-label="Outline preview">
+    <svg className="h-40 w-full rounded-md border bg-muted/40" viewBox={view} role="img" aria-label="Outline preview">
       <polyline
         points={pts.map((p) => `${p.x},${-p.y}`).join(' ')}
-        fill={open ? 'none' : 'rgba(47,111,222,0.10)'}
-        stroke="#2f6fde"
+        fill={open ? 'none' : 'oklch(0.6 0.15 255 / 0.12)'}
+        stroke="oklch(0.6 0.15 255)"
         strokeWidth={span * 0.012}
         strokeLinejoin="round"
       />
@@ -39,7 +39,7 @@ export function OutlinePreview({ runs, origin }: { runs: Run[]; origin: Vec2 }) 
           strokeDasharray={`${span * 0.03} ${span * 0.02}`}
         />
       )}
-      <circle cx={start.x} cy={-start.y} r={span * 0.018} fill="#1d232a" />
+      <circle cx={start.x} cy={-start.y} r={span * 0.018} fill="var(--foreground)" />
       {runs.map((_, i) => {
         const a = pts[i];
         const b = pts[i + 1];
@@ -51,8 +51,8 @@ export function OutlinePreview({ runs, origin }: { runs: Run[]; origin: Vec2 }) 
             fontSize={fontSize}
             textAnchor="middle"
             dominantBaseline="central"
-            fill="#1d232a"
-            stroke="#fff"
+            fill="var(--foreground)"
+            stroke="var(--background)"
             strokeWidth={fontSize * 0.25}
             paintOrder="stroke"
           >
