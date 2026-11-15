@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 import { formatLength, parseLength, type UnitSystem } from './units';
 
 interface Props {
@@ -8,13 +11,16 @@ interface Props {
   onChange: (mm: number) => void;
   min?: number;
   ariaLabel?: string;
+  hint?: string;
+  className?: string;
 }
 
 /**
  * A text field for a length. Shows the value in the current units and accepts
  * either system when typing (e.g. 8' 6", 2600 mm, 2.6 m).
  */
-export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel }: Props) {
+export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel, hint, className }: Props) {
+  const id = useId();
   const [text, setText] = useState(formatLength(valueMm, units));
   const [error, setError] = useState(false);
 
@@ -36,11 +42,15 @@ export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel }:
   }
 
   return (
-    <label className="field">
-      {label && <span className="field-label">{label}</span>}
-      <input
+    <div className={cn('grid gap-1.5', className)}>
+      {label && (
+        <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
+          {label}
+        </Label>
+      )}
+      <Input
+        id={id}
         aria-label={label || ariaLabel}
-        className={error ? 'invalid' : undefined}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
@@ -52,12 +62,15 @@ export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel }:
           }
         }}
         aria-invalid={error}
+        className="h-8 tabular-nums"
       />
-      {error && (
-        <span className="field-error">
+      {error ? (
+        <span className="text-xs text-destructive">
           {units === 'imperial' ? `Try 8' 6 1/2" or 102"` : 'Try 2600 mm or 2.6 m'}
         </span>
+      ) : (
+        hint && <span className="text-[11px] text-muted-foreground">{hint}</span>
       )}
-    </label>
+    </div>
   );
 }

@@ -1,17 +1,48 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Box,
+  Eye,
+  EyeOff,
+  FilePlus2,
+  FolderOpen,
+  Moon,
+  Plus,
+  RotateCcw,
+  Save,
+  Sparkles,
+  Sun,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
+import { Segmented } from '@/components/Segmented';
+import { cn } from '@/lib/utils';
 import { LengthInput } from './LengthInput';
 import { buildComponents, loadAutosave, newId, parseProject, reducer, saveAutosave } from './model/project';
+import { foundationFields } from './model/foundation';
 import { useViewSettings } from './settings';
+import { useTheme } from './theme';
 import { downloadBlob, safeFilename } from './download';
 import { exportGlb } from './scene/export';
 import { FoundationEditor } from './panels/FoundationEditor';
-import { foundationFields } from './model/foundation';
 import { formatLength, type UnitSystem } from './units';
 import { Viewport } from './Viewport';
 import { ChatPanel } from './chat/ChatPanel';
 
+function PanelHeading({ children }: { children: React.ReactNode }) {
+  return <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{children}</h2>;
+}
+
 export default function App() {
   const [settings, setSettings] = useViewSettings();
+  const { dark, toggle: toggleTheme } = useTheme();
   const [project, dispatch] = useReducer(reducer, undefined, loadAutosave);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(project.steps[0]?.id ?? null);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
@@ -27,7 +58,7 @@ export default function App() {
   const components = allComponents.filter((c) => visibleSteps.has(c.stepId));
   const selectedStep = project.steps.find((s) => s.id === selectedStepId) ?? null;
   const selectedComponent = allComponents.find((c) => c.id === selectedComponentId) ?? null;
-  const componentStep = selectedComponent ? project.steps.find((s) => s.id === selectedComponent.stepId) ?? null : null;
+  const componentStep = selectedComponent ? (project.steps.find((s) => s.id === selectedComponent.stepId) ?? null) : null;
 
   function selectComponent(id: string | null) {
     setSelectedComponentId(id);
@@ -63,20 +94,35 @@ export default function App() {
   }
 
   return (
-    <div className={`app ${selectedStep ? 'with-editor' : ''}`}>
-      <header className="topbar">
-        <h1>House Modeler</h1>
-        <input
-          className="project-name"
+    <div
+      className={cn(
+        'grid h-full grid-rows-[auto_1fr] grid-cols-1 md:grid-cols-[18rem_1fr]',
+        selectedStep && 'lg:grid-cols-[18rem_1fr_22rem]',
+      )}
+    >
+      {/* Top bar */}
+      <header className="col-span-full flex flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
+        <div className="flex items-center gap-2">
+          <Box className="size-5" />
+          <h1 className="text-sm font-semibold">House Modeler</h1>
+        </div>
+        <Input
+          className="h-8 w-44 border-transparent text-muted-foreground shadow-none hover:border-input focus-visible:text-foreground"
           value={project.name}
           aria-label="Project name"
           onChange={(e) => dispatch({ type: 'rename-project', name: e.target.value })}
         />
-        <div className="spacer" />
-        <div className="menu">
-          <button onClick={newProject}>New</button>
-          <button onClick={() => fileInput.current?.click()}>Open…</button>
-          <button
+        <div className="flex-1" />
+        <div className="flex flex-wrap items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={newProject}>
+            <FilePlus2 /> New
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => fileInput.current?.click()}>
+            <FolderOpen /> Open
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() =>
               downloadBlob(
                 new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }),
@@ -84,11 +130,11 @@ export default function App() {
               )
             }
           >
-            Save to file
-          </button>
-          <button onClick={() => exportGlb(components, project.name)} disabled={components.length === 0}>
-            Export to Blender
-          </button>
+            <Save /> Save
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => exportGlb(components, project.name)} disabled={components.length === 0}>
+            <Box /> Export to Blender
+          </Button>
           <input
             ref={fileInput}
             type="file"
@@ -101,71 +147,95 @@ export default function App() {
             }}
           />
         </div>
-        <button className={chatOpen ? 'primary' : undefined} onClick={() => setChatOpen((o) => !o)}>
-          ✦ Ask Claude
-        </button>
-        <div className="segmented" role="group" aria-label="Units">
-          {(['imperial', 'metric'] as UnitSystem[]).map((u) => (
-            <button
-              key={u}
-              className={units === u ? 'active' : undefined}
-              aria-pressed={units === u}
-              onClick={() => setSettings({ ...settings, units: u })}
-            >
-              {u === 'imperial' ? 'ft-in' : 'mm'}
-            </button>
-          ))}
-        </div>
+        <Separator orientation="vertical" className="mx-1 !h-6" />
+        <Button variant={chatOpen ? 'default' : 'outline'} size="sm" onClick={() => setChatOpen((o) => !o)}>
+          <Sparkles /> Ask Claude
+        </Button>
+        <Segmented<UnitSystem>
+          label="Units"
+          value={units}
+          onChange={(u) => setSettings({ ...settings, units: u })}
+          options={[
+            { value: 'imperial', label: 'ft-in' },
+            { value: 'metric', label: 'mm' },
+          ]}
+        />
+        <Button variant="ghost" size="icon" className="size-8" onClick={toggleTheme} aria-label={dark ? 'Light theme' : 'Dark theme'}>
+          {dark ? <Sun /> : <Moon />}
+        </Button>
       </header>
 
-      <aside className="sidebar">
-        <section>
-          <h2>Build steps</h2>
+      {/* Left: steps and components */}
+      <aside className="grid content-start gap-5 overflow-y-auto border-b bg-background p-4 md:border-r md:border-b-0">
+        <section className="grid gap-3">
+          <PanelHeading>Build steps</PanelHeading>
           {project.steps.length === 0 && (
-            <p className="empty">
-              No steps yet. Start with the <strong>foundation</strong>: its outline, walls, footing and slab.
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              No steps yet. Start with the <strong className="text-foreground">foundation</strong>: its outline, walls,
+              footing and slab.
             </p>
           )}
-          <ol className="steps">
+          <ol className="grid gap-1.5">
             {project.steps.map((s, i) => (
-              <li key={s.id} className={s.id === selectedStepId ? 'selected' : undefined}>
-                <button className="step-main" onClick={() => setSelectedStepId(s.id)}>
-                  <span className="step-num">{i + 1}</span>
-                  <span className="step-text">
-                    <span className="step-label">{s.label}</span>
-                    <span className="step-level">{s.level}</span>
+              <li key={s.id} className="flex items-center gap-1">
+                <button
+                  className={cn(
+                    'flex flex-1 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors hover:bg-accent',
+                    s.id === selectedStepId && 'border-primary bg-accent',
+                    !s.visible && 'opacity-60',
+                  )}
+                  onClick={() => setSelectedStepId(s.id)}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary text-xs text-primary-foreground tabular-nums">
+                    {i + 1}
+                  </span>
+                  <span className="grid min-w-0">
+                    <span className="truncate text-sm font-medium">{s.label}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {s.level}
+                      {s.kind === 'foundation' && ` · ${s.params.type === 'slab-on-grade' ? 'Slab on grade' : 'Basement'}`}
+                    </span>
                   </span>
                 </button>
-                <button
-                  className="icon"
-                  title={s.visible ? 'Hide' : 'Show'}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
                   aria-label={s.visible ? `Hide ${s.label}` : `Show ${s.label}`}
                   onClick={() => dispatch({ type: 'update-step', id: s.id, patch: { visible: !s.visible } })}
                 >
-                  {s.visible ? '👁' : '⊘'}
-                </button>
+                  {s.visible ? <Eye /> : <EyeOff />}
+                </Button>
               </li>
             ))}
           </ol>
-          <button className="primary" onClick={addFoundation}>
-            + Add foundation
-          </button>
+          <Button onClick={addFoundation}>
+            <Plus /> Add foundation
+          </Button>
         </section>
 
-        <section>
-          <h2>Components ({components.length})</h2>
+        <Separator />
+
+        <section className="grid gap-3">
+          <div className="flex items-center gap-2">
+            <PanelHeading>Components</PanelHeading>
+            <Badge variant="secondary">{components.length}</Badge>
+          </div>
           {components.length === 0 ? (
-            <p className="empty">Every wall, footing and slab you build will be listed here.</p>
+            <p className="text-sm text-muted-foreground">Every wall, footing and slab you build will be listed here.</p>
           ) : (
-            <ul className="components">
+            <ul className="grid gap-1">
               {components.map((c) => (
                 <li key={c.id}>
                   <button
-                    className={c.id === selectedComponentId ? 'selected' : undefined}
+                    className={cn(
+                      'grid w-full gap-0.5 rounded-md border border-transparent px-3 py-1.5 text-left transition-colors hover:bg-accent',
+                      c.id === selectedComponentId && 'border-highlight bg-highlight-soft hover:bg-highlight-soft',
+                    )}
                     onClick={() => selectComponent(c.id === selectedComponentId ? null : c.id)}
                   >
-                    <span className="comp-name">{c.name}</span>
-                    <span className="comp-dims">
+                    <span className="text-sm">{c.name}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
                       {c.dims.map((d) => `${d.label} ${formatLength(d.mm, units)}`).join(' · ')}
                     </span>
                   </button>
@@ -175,8 +245,10 @@ export default function App() {
           )}
         </section>
 
-        <section>
-          <h2>View</h2>
+        <Separator />
+
+        <section className="grid gap-3">
+          <PanelHeading>View</PanelHeading>
           <LengthInput
             label="Grid spacing"
             valueMm={settings.gridSpacing}
@@ -184,13 +256,17 @@ export default function App() {
             min={10}
             onChange={(mm) => setSettings({ ...settings, gridSpacing: mm })}
           />
-          <button onClick={() => setViewKey((k) => k + 1)}>Reset camera</button>
+          <Button variant="outline" size="sm" onClick={() => setViewKey((k) => k + 1)}>
+            <RotateCcw /> Reset camera
+          </Button>
         </section>
       </aside>
 
-      <main className="viewport">
+      {/* Center: 3D */}
+      <main className="relative min-h-[60vh] min-w-0 bg-viewport md:min-h-0">
         <Viewport
           key={viewKey}
+          dark={dark}
           components={components}
           gridSpacing={settings.gridSpacing}
           selectedId={selectedComponentId}
@@ -204,55 +280,62 @@ export default function App() {
             onClose={() => setChatOpen(false)}
           />
         )}
-        <div className="hint">Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it</div>
+        <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-background/85 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it
+        </div>
       </main>
 
+      {/* Right: inspector */}
       {selectedStep && (
-        <aside className="inspector">
-          <div className="inspector-head">
-            <input
-              className="step-title"
+        <aside className="col-span-full grid content-start gap-5 overflow-y-auto border-t bg-background p-4 lg:col-span-1 lg:border-t-0 lg:border-l">
+          <div className="flex items-center gap-2">
+            <Input
+              className="h-9 flex-1 border-transparent text-base font-semibold shadow-none hover:border-input"
               value={selectedStep.label}
               aria-label="Step name"
               onChange={(e) => dispatch({ type: 'update-step', id: selectedStep.id, patch: { label: e.target.value } })}
             />
-            <button className="icon" aria-label="Close editor" onClick={() => setSelectedStepId(null)}>
-              ×
-            </button>
+            <Button variant="ghost" size="icon" className="size-8" aria-label="Close editor" onClick={() => setSelectedStepId(null)}>
+              <X />
+            </Button>
           </div>
+
           {selectedComponent && componentStep && componentStep.id === selectedStep.id && (
-            <div className="selected-piece">
-              <div className="row">
-                <strong>{selectedComponent.name}</strong>
-                <div className="spacer" />
-                <button className="icon" aria-label="Deselect piece" onClick={() => setSelectedComponentId(null)}>
-                  ×
-                </button>
+            <div className="grid gap-3 rounded-lg border border-highlight bg-highlight-soft p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">{selectedComponent.name}</span>
+                <div className="flex-1" />
+                <Button variant="ghost" size="icon" className="size-7" aria-label="Deselect piece" onClick={() => setSelectedComponentId(null)}>
+                  <X />
+                </Button>
               </div>
               {foundationFields(componentStep.params, selectedComponent).map((f) => (
-                <div key={f.label}>
-                  <LengthInput
-                    label={f.label}
-                    valueMm={f.mm}
-                    units={units}
-                    min={f.min}
-                    onChange={(mm) =>
-                      dispatch({ type: 'update-foundation', id: componentStep.id, params: f.apply(componentStep.params, mm) })
-                    }
-                  />
-                  {f.scope && <span className="scope">{f.scope}</span>}
-                </div>
+                <LengthInput
+                  key={f.label}
+                  label={f.label}
+                  hint={f.scope}
+                  valueMm={f.mm}
+                  units={units}
+                  min={f.min}
+                  onChange={(mm) =>
+                    dispatch({ type: 'update-foundation', id: componentStep.id, params: f.apply(componentStep.params, mm) })
+                  }
+                />
               ))}
             </div>
           )}
 
-          <label className="field">
-            <span className="field-label">Level</span>
-            <input
+          <div className="grid gap-1.5">
+            <Label htmlFor="step-level" className="text-xs font-normal text-muted-foreground">
+              Level
+            </Label>
+            <Input
+              id="step-level"
+              className="h-8"
               value={selectedStep.level}
               onChange={(e) => dispatch({ type: 'update-step', id: selectedStep.id, patch: { level: e.target.value } })}
             />
-          </label>
+          </div>
 
           <FoundationEditor
             step={selectedStep}
@@ -260,21 +343,32 @@ export default function App() {
             onChange={(params) => dispatch({ type: 'update-foundation', id: selectedStep.id, params })}
           />
 
-          <label className="field">
-            <span className="field-label">Notes (specs, materials, questions)</span>
-            <textarea
+          <Separator />
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="step-notes" className="text-xs font-normal text-muted-foreground">
+              Notes (specs, materials, questions)
+            </Label>
+            <Textarea
+              id="step-notes"
               rows={3}
               value={selectedStep.notes}
               onChange={(e) => dispatch({ type: 'update-step', id: selectedStep.id, patch: { notes: e.target.value } })}
             />
-          </label>
+          </div>
 
-          <div className="row">
-            <button onClick={() => dispatch({ type: 'move-step', id: selectedStep.id, by: -1 })}>Move up</button>
-            <button onClick={() => dispatch({ type: 'move-step', id: selectedStep.id, by: 1 })}>Move down</button>
-            <div className="spacer" />
-            <button
-              className="danger"
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'move-step', id: selectedStep.id, by: -1 })}>
+              <ArrowUp /> Move up
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'move-step', id: selectedStep.id, by: 1 })}>
+              <ArrowDown /> Move down
+            </Button>
+            <div className="flex-1" />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
               onClick={() => {
                 if (window.confirm(`Delete "${selectedStep.label}"?`)) {
                   dispatch({ type: 'delete-step', id: selectedStep.id });
@@ -282,8 +376,8 @@ export default function App() {
                 }
               }}
             >
-              Delete step
-            </button>
+              <Trash2 /> Delete step
+            </Button>
           </div>
         </aside>
       )}
