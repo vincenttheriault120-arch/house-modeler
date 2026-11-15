@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The app is served from https://<user>.github.io/house-modeler/
+// Relative asset paths, so the same build works at the site root and in PR preview folders.
 export default defineConfig({
-  base: '/house-modeler/',
+  base: './',
   plugins: [react()],
 });
