@@ -7,13 +7,14 @@ interface Props {
   units: UnitSystem;
   onChange: (mm: number) => void;
   min?: number;
+  ariaLabel?: string;
 }
 
 /**
  * A text field for a length. Shows the value in the current units and accepts
  * either system when typing (e.g. 8' 6", 2600 mm, 2.6 m).
  */
-export function LengthInput({ label, valueMm, units, onChange, min }: Props) {
+export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel }: Props) {
   const [text, setText] = useState(formatLength(valueMm, units));
   const [error, setError] = useState(false);
 
@@ -36,8 +37,9 @@ export function LengthInput({ label, valueMm, units, onChange, min }: Props) {
 
   return (
     <label className="field">
-      <span className="field-label">{label}</span>
+      {label && <span className="field-label">{label}</span>}
       <input
+        aria-label={label || ariaLabel}
         className={error ? 'invalid' : undefined}
         value={text}
         onChange={(e) => setText(e.target.value)}
