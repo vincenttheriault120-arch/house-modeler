@@ -17,6 +17,8 @@ export interface FoundationParams {
   wallThickness: number;
   /** Top of the foundation wall, relative to finished grade (0). */
   topElevation: number;
+  /** When set, topElevation follows this level. */
+  topLevelId?: string;
   /** Basement wall height, or frost wall depth for slab on grade. */
   wallHeight: number;
   footingWidth: number;

@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { applyFoundationType, defaultFoundation, type FoundationParams, type FoundationType } from '../model/foundation';
 import type { Direction, Run } from '../model/geometry';
 import { defaultFloor, floorLevels, type FloorParams } from '../model/floor';
+import type { Level, LevelKind } from '../model/levels';
 import { newId, reducer, supportOf } from '../model/project';
 import type { Project } from '../model/types';
 import { formatLength, parseLength, type UnitSystem } from '../units';
@@ -31,6 +32,7 @@ const FOUNDATION_FIELDS = {
   footing_width: LENGTH,
   footing_thickness: LENGTH,
   slab_thickness: LENGTH,
+  top_level_id: { type: 'string', description: 'Make the top follow this level (its elevation replaces top_elevation). "" to unlink.' },
 } as const;
 
 const FLOOR_FIELDS = {
@@ -48,6 +50,7 @@ const FLOOR_FIELDS = {
   post_spacing: { ...LENGTH, description: 'Max spacing of posts under the beam; "0" = no posts. ' + LENGTH.description },
   post_size: LENGTH,
   subfloor_thickness: LENGTH,
+  level_id: { type: 'string', description: 'The level this floor should finish at (top of subfloor); the app warns on a mismatch. "" for none.' },
 } as const;
 
 export const TOOLS: Anthropic.Beta.BetaTool[] = [
@@ -104,6 +107,33 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
       type: 'object',
       properties: { step_id: { type: 'string' }, support_step_id: { type: 'string' }, ...FLOOR_FIELDS },
       required: ['step_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_levels',
+    description:
+      'Replace the list of levels: the key heights of the house relative to finished grade = 0 (top of foundation, garage slab, each finished floor, ceilings, eave, ridge). Keep the level_id of levels that stay, so steps following them stay linked.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        levels: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              level_id: { type: 'string', description: 'Existing id to keep; omit for a new level.' },
+              name: { type: 'string' },
+              kind: { type: 'string', enum: ['foundation-top', 'garage-slab', 'floor', 'ceiling', 'eave', 'ridge', 'other'] },
+              elevation: LENGTH,
+            },
+            required: ['name', 'kind', 'elevation'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['levels'],
       additionalProperties: false,
     },
   },
@@ -177,6 +207,10 @@ function foundationPatch(base: FoundationParams, input: Input): FoundationParams
   for (const [key, field] of map) {
     if (input[key] !== undefined) (p[field] as number) = len(input[key], key);
   }
+  if (typeof input.top_level_id === 'string') {
+    if (input.top_level_id === '') delete p.topLevelId;
+    else p.topLevelId = input.top_level_id;
+  }
   return p;
 }
 
@@ -207,6 +241,11 @@ function floorPatch(project: Project, base: FloorParams, input: Input): FloorPar
     p.joistDirection = input.joist_direction;
   }
   if (input.beam !== undefined) p.beam = !!input.beam;
+  if (typeof input.level_id === 'string') {
+    if (input.level_id === '') delete p.levelId;
+    else if (!project.levels.some((l) => l.id === input.level_id)) throw new ToolInputError(`No level with id "${input.level_id}"`);
+    else p.levelId = input.level_id;
+  }
   for (const [key, field] of FLOOR_MAP) {
     if (input[key] !== undefined) (p[field] as number) = len(input[key], key);
   }
@@ -217,6 +256,19 @@ function floorPatch(project: Project, base: FloorParams, input: Input): FloorPar
 export function runTool(project: Project, name: string, input: Input): { project: Project; result: string; isError: boolean } {
   try {
     const step = typeof input.step_id === 'string' ? project.steps.find((s) => s.id === input.step_id) : undefined;
+    if (name === 'set_levels') {
+      if (!Array.isArray(input.levels)) throw new ToolInputError('levels must be a list');
+      const kinds = ['foundation-top', 'garage-slab', 'floor', 'ceiling', 'eave', 'ridge', 'other'];
+      const levels: Level[] = input.levels.map((raw: unknown, i: number) => {
+        const l = raw as Input;
+        if (typeof l.name !== 'string' || !kinds.includes(l.kind as string)) throw new ToolInputError(`levels[${i}] needs a name and a valid kind`);
+        const keep = typeof l.level_id === 'string' && project.levels.some((x) => x.id === l.level_id);
+        return { id: keep ? (l.level_id as string) : newId(), name: l.name, kind: l.kind as LevelKind, elevation: len(l.elevation, `levels[${i}].elevation`), source: 'Set in chat' };
+      });
+      return { project: reducer(project, { type: 'set-levels', levels }), result: `Levels set: ${levels.map((l) => `${l.name}=${l.id}`).join(', ')}.`, isError: false };
+    }
+    if (typeof input.top_level_id === 'string' && input.top_level_id !== '' && !project.levels.some((l) => l.id === input.top_level_id))
+      throw new ToolInputError(`No level with id "${input.top_level_id}"`);
     if (name !== 'add_foundation_step' && name !== 'add_floor_step' && !step) throw new ToolInputError(`No step with id "${input.step_id}"`);
 
     switch (name) {
@@ -285,6 +337,7 @@ export function describeProject(project: Project, units: UnitSystem): string {
   return JSON.stringify(
     {
       name: project.name,
+      levels: project.levels.map((l) => ({ level_id: l.id, name: l.name, kind: l.kind, elevation: f(l.elevation) })),
       steps: project.steps.map((s, i) => {
         const base = {
           order: i + 1,
@@ -303,6 +356,7 @@ export function describeProject(project: Project, units: UnitSystem): string {
             support_step_id: p.supportId,
             joist_direction: p.joistDirection,
             beam: p.beam,
+            level_id: p.levelId,
             finished_floor_elevation: support ? f(floorLevels(p, support).floorTop) : 'support missing',
           };
           for (const [key, field] of FLOOR_MAP) out[key] = f(p[field] as number);
@@ -317,6 +371,7 @@ export function describeProject(project: Project, units: UnitSystem): string {
           wall_thickness: f(s.params.wallThickness),
           wall_height: f(s.params.wallHeight),
           top_elevation: f(s.params.topElevation),
+          top_level_id: s.params.topLevelId,
           footing_width: f(s.params.footingWidth),
           footing_thickness: f(s.params.footingThickness),
           slab_thickness: f(s.params.slabThickness),

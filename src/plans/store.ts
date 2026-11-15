@@ -34,6 +34,32 @@ export interface PlanMeta {
   kind: PlanKind;
   size: number;
   addedAt: number;
+  /** Other drawings on the same PDF (multi-sheet sets). */
+  contains?: PlanKind[];
+  /** Set when Claude read the PDF to label it. */
+  labeledBy?: 'claude';
+}
+
+/** The drawings worth having before building, in the order they're used. */
+export const EXPECTED_PLANS: { kind: PlanKind; why: string }[] = [
+  { kind: 'basement', why: 'Foundation outline and dimensions' },
+  { kind: 'ground-floor', why: 'Ground floor walls and openings' },
+  { kind: 'first-floor', why: 'Upper floor, incl. the cantilever' },
+  { kind: 'elevation-front', why: 'Heights: grade, floors, roof' },
+  { kind: 'elevation-back', why: 'Heights, back of the house' },
+  { kind: 'elevation-left', why: 'Heights, side' },
+  { kind: 'elevation-right', why: 'Heights, side' },
+  { kind: 'section', why: 'Floor and wall build-up, exact heights' },
+];
+
+/** Which plan kinds are covered by the uploaded PDFs. */
+export function coveredKinds(plans: PlanMeta[]): Set<PlanKind> {
+  const s = new Set<PlanKind>();
+  for (const p of plans) {
+    s.add(p.kind);
+    for (const k of p.contains ?? []) s.add(k);
+  }
+  return s;
 }
 
 /** Guess the plan type from its file name (English or French). */

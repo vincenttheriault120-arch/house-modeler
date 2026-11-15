@@ -15,6 +15,7 @@ How the model works:
 - type "slab-on-grade": slab whose top is at top_elevation covering the whole outline, on a perimeter frost wall of depth wall_height (0 = none) with a footing.
 - Two steps may overlap where they share a wall.
 - A floor step sits on a foundation step (support_step_id) and takes its outline and top of wall from it. Bottom to top: sill plate on the wall, rim joist around the edge, joists at joist_spacing running along joist_direction, an optional dropped beam under the joists across the middle (basement only) with posts down to the basement slab, and the subfloor. finished_floor_elevation is computed.
+- Levels are the house's key heights relative to grade = 0 (top of foundation, garage slab, finished floors, ceilings, eave, ridge), usually read from the elevations. A foundation can follow a level (top_level_id): its top then equals that level and moves with it. A floor can name the level it should finish at (level_id); the app warns when they disagree.
 - Only foundation and floor steps exist so far. If asked for walls, roofs, openings etc., say that step type isn't available yet.
 
 How to work:

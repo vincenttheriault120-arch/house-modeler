@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { LengthInput } from './LengthInput';
 import { buildComponents, loadAutosave, newId, parseProject, reducer, saveAutosave } from './model/project';
 import { foundationFields } from './model/foundation';
+import { emptyProject } from './model/types';
 import { floorFields } from './model/floor';
 import { FloorEditor } from './panels/FloorEditor';
 import { useViewSettings } from './settings';
@@ -46,6 +47,10 @@ import { SuggestDialog } from './plans/SuggestDialog';
 import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import type { PlanMeta } from './plans/store';
 import { usePlans } from './plans/usePlans';
+import { LevelsSection } from './panels/LevelsSection';
+import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
+import { defaultFloor } from './model/floor';
+import { sortLevels } from './model/levels';
 
 function PanelHeading({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{children}</h2>;
@@ -61,6 +66,7 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [viewing, setViewing] = useState<PlanMeta | null>(null);
   const [suggesting, setSuggesting] = useState(false);
+  const [suggestingLevels, setSuggestingLevels] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const planInput = useRef<HTMLInputElement>(null);
@@ -88,9 +94,12 @@ export default function App() {
     const id = newId();
     dispatch({ type: 'add-foundation', id });
     if (preset === 'basement') dispatch({ type: 'update-step', id, patch: { label: 'Basement' } });
-    if (preset === 'garage') {
-      dispatch({ type: 'update-step', id, patch: { label: 'Garage slab', level: 'Ground floor' } });
-      dispatch({ type: 'update-foundation', id, params: applyFoundationType(defaultFoundation(), 'slab-on-grade') });
+    if (preset === 'garage') dispatch({ type: 'update-step', id, patch: { label: 'Garage slab', level: 'Ground floor' } });
+    // Start from the right height: follow the matching level when there is one.
+    const params = preset === 'garage' ? applyFoundationType(defaultFoundation(), 'slab-on-grade') : defaultFoundation();
+    const level = project.levels.find((l) => l.kind === (preset === 'garage' ? 'garage-slab' : 'foundation-top'));
+    if (preset === 'garage' || level) {
+      dispatch({ type: 'update-foundation', id, params: level ? { ...params, topLevelId: level.id, topElevation: level.elevation } : params });
     }
     setSelectedStepId(id);
     setSelectedComponentId(null);
@@ -100,8 +109,26 @@ export default function App() {
   function addFloor(supportId: string) {
     const id = newId();
     dispatch({ type: 'add-floor', id, supportId });
+    // Check it against the lowest finished-floor level above grade (the ground floor).
+    const target = sortLevels(project.levels).find((l) => l.kind === 'floor' && l.elevation > 0);
+    const support = project.steps.find((s) => s.id === supportId);
+    if (target && support?.kind === 'foundation') {
+      dispatch({ type: 'update-floor', id, params: { ...defaultFloor(supportId, support.params), levelId: target.id } });
+    }
     setSelectedStepId(id);
     setSelectedComponentId(null);
+  }
+
+  function startLevelsSuggest() {
+    if (!loadApiKey()) {
+      setChatOpen(true);
+      return;
+    }
+    if (plans.plans.length === 0) {
+      planInput.current?.click();
+      return;
+    }
+    setSuggestingLevels(true);
   }
 
   function startSuggest() {
@@ -138,8 +165,14 @@ export default function App() {
       {
         id: 'plans',
         title: 'Import your plans',
-        detail: 'Add the PDF plans and say what each one shows.',
+        detail: 'Floor plans, the four elevations and a section. Claude labels each one.',
         action: { label: 'Add plan PDFs', run: () => planInput.current?.click() },
+      },
+      {
+        id: 'levels',
+        title: 'Set the levels',
+        detail: 'Grade, top of foundation, each floor and the roof ridge, read from the elevations. Every step starts from these.',
+        action: { label: 'Suggest from elevations', run: startLevelsSuggest },
       },
       {
         id: 'basement',
@@ -165,6 +198,7 @@ export default function App() {
     ],
     {
       plans: plans.plans.length > 0,
+      levels: project.levels.length > 0,
       basement: foundations.some((s) => s.params.type === 'basement'),
       slab: foundations.some((s) => s.params.type === 'slab-on-grade'),
       floor0: hasFloorOverBasement,
@@ -188,7 +222,7 @@ export default function App() {
 
   function newProject() {
     if (project.steps.length && !window.confirm('Start a new, empty project? Save this one to a file first if you want to keep it.')) return;
-    dispatch({ type: 'replace', project: { version: 1, name: 'My house', steps: [] } });
+    dispatch({ type: 'replace', project: emptyProject() });
     setSelectedStepId(null);
     setSelectedComponentId(null);
     setViewKey((k) => k + 1);
@@ -267,7 +301,7 @@ export default function App() {
       </header>
 
       {/* Left: steps and components */}
-      <aside className="grid content-start gap-5 overflow-y-auto border-b bg-background p-4 md:border-r md:border-b-0">
+      <aside className="grid min-w-0 content-start gap-5 overflow-x-hidden overflow-y-auto border-b bg-background p-4 md:border-r md:border-b-0 [&>*]:min-w-0">
         <section className="grid gap-2">
           <PanelHeading>Guide</PanelHeading>
           <GuidedSteps guides={guides} />
@@ -284,6 +318,8 @@ export default function App() {
             inputRef={planInput}
             plans={plans.plans}
             error={plans.error}
+            labeling={plans.labeling}
+            hasKey={!!loadApiKey()}
             onAdd={(f) => {
               setNotice(null);
               plans.add(f);
@@ -291,6 +327,21 @@ export default function App() {
             onUpdate={plans.update}
             onRemove={plans.remove}
             onView={setViewing}
+          />
+        </section>
+
+        <Separator />
+
+        <section className="grid gap-3">
+          <div className="flex items-center gap-2">
+            <PanelHeading>Levels</PanelHeading>
+            {project.levels.length > 0 && <Badge variant="secondary">{project.levels.length}</Badge>}
+          </div>
+          <LevelsSection
+            project={project}
+            units={units}
+            onChange={(levels) => dispatch({ type: 'set-levels', levels })}
+            onSuggest={startLevelsSuggest}
           />
         </section>
 
@@ -506,6 +557,7 @@ export default function App() {
           {selectedStep.kind === 'foundation' && (
             <FoundationEditor
               step={selectedStep}
+              levels={project.levels}
               units={units}
               onChange={(params) => dispatch({ type: 'update-foundation', id: selectedStep.id, params })}
             />
@@ -516,6 +568,18 @@ export default function App() {
               step={selectedStep}
               units={units}
               onChange={(params) => dispatch({ type: 'update-floor', id: selectedStep.id, params })}
+              onRaiseSupport={(by) => {
+                const sup = project.steps.find((x) => x.id === selectedStep.params.supportId);
+                if (sup?.kind !== 'foundation') return;
+                const lvl = project.levels.find((l) => l.id === sup.params.topLevelId);
+                // A foundation that follows a level moves by moving its level.
+                if (lvl)
+                  dispatch({
+                    type: 'set-levels',
+                    levels: project.levels.map((l) => (l.id === lvl.id ? { ...l, elevation: l.elevation + by, source: 'Adjusted to meet the floor' } : l)),
+                  });
+                else dispatch({ type: 'update-foundation', id: sup.id, params: { ...sup.params, topElevation: sup.params.topElevation + by } });
+              }}
             />
           )}
 
@@ -558,6 +622,16 @@ export default function App() {
         </aside>
       )}
 
+      {suggestingLevels && (
+        <LevelsSuggestDialog
+          apiKey={loadApiKey()}
+          plans={plans.plans}
+          project={project}
+          units={units}
+          onApply={(levels) => dispatch({ type: 'set-levels', levels })}
+          onClose={() => setSuggestingLevels(false)}
+        />
+      )}
       {suggesting && selectedStep?.kind === 'foundation' && (
         <SuggestDialog
           apiKey={loadApiKey()}

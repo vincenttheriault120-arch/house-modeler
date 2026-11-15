@@ -1,6 +1,7 @@
 import type { Component } from './component';
 import { buildFloor, defaultFloor, type FloorParams } from './floor';
 import { buildFoundation, defaultFoundation, type FoundationParams } from './foundation';
+import type { Level } from './levels';
 import { emptyProject, type FloorStep, type FoundationStep, type Project, type Step } from './types';
 
 export function newId(): string {
@@ -17,11 +18,49 @@ export type Action =
   | { type: 'update-floor'; id: string; params: FloorParams }
   | { type: 'delete-step'; id: string }
   | { type: 'move-step'; id: string; by: -1 | 1 }
+  | { type: 'set-levels'; levels: Level[] }
   | { type: 'rename-project'; name: string }
   | { type: 'replace'; project: Project };
 
+/**
+ * Keep steps that follow a level in step with it: a foundation linked to a
+ * level takes its top elevation from it. Links to deleted levels are dropped
+ * (the last value is kept).
+ */
+export function syncLevels(project: Project): Project {
+  let changed = false;
+  const byId = new Map(project.levels.map((l) => [l.id, l]));
+  const steps = project.steps.map((s) => {
+    if (s.kind === 'foundation' && s.params.topLevelId) {
+      const level = byId.get(s.params.topLevelId);
+      if (!level) {
+        changed = true;
+        const { topLevelId: _gone, ...params } = s.params;
+        return { ...s, params };
+      }
+      if (level.elevation !== s.params.topElevation) {
+        changed = true;
+        return { ...s, params: { ...s.params, topElevation: level.elevation } };
+      }
+    }
+    if (s.kind === 'floor' && s.params.levelId && !byId.has(s.params.levelId)) {
+      changed = true;
+      const { levelId: _gone, ...params } = s.params;
+      return { ...s, params };
+    }
+    return s;
+  });
+  return changed ? { ...project, steps } : project;
+}
+
 export function reducer(state: Project, action: Action): Project {
+  return syncLevels(baseReducer(state, action));
+}
+
+function baseReducer(state: Project, action: Action): Project {
   switch (action.type) {
+    case 'set-levels':
+      return { ...state, levels: action.levels };
     case 'add-foundation': {
       const n = state.steps.filter((s) => s.kind === 'foundation').length;
       const step: FoundationStep = {
@@ -112,6 +151,7 @@ export function parseProject(json: string): Project {
   return {
     ...base,
     ...data,
+    levels: Array.isArray(data.levels) ? data.levels : [],
     steps: data.steps.map((s: Partial<Step>) => {
       const step = { visible: true, notes: '', level: '', ...s } as Step;
       if (step.kind === 'foundation') step.params = { ...step.params, type: step.params.type ?? 'basement' };
