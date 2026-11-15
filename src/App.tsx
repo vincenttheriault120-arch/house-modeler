@@ -8,6 +8,7 @@ import { FoundationEditor } from './panels/FoundationEditor';
 import { foundationFields } from './model/foundation';
 import { formatLength, type UnitSystem } from './units';
 import { Viewport } from './Viewport';
+import { ChatPanel } from './chat/ChatPanel';
 
 export default function App() {
   const [settings, setSettings] = useViewSettings();
@@ -15,6 +16,7 @@ export default function App() {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(project.steps[0]?.id ?? null);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [viewKey, setViewKey] = useState(0);
+  const [chatOpen, setChatOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const units = settings.units;
 
@@ -99,6 +101,9 @@ export default function App() {
             }}
           />
         </div>
+        <button className={chatOpen ? 'primary' : undefined} onClick={() => setChatOpen((o) => !o)}>
+          ✦ Ask Claude
+        </button>
         <div className="segmented" role="group" aria-label="Units">
           {(['imperial', 'metric'] as UnitSystem[]).map((u) => (
             <button
@@ -191,6 +196,14 @@ export default function App() {
           selectedId={selectedComponentId}
           onSelect={selectComponent}
         />
+        {chatOpen && (
+          <ChatPanel
+            project={project}
+            units={units}
+            onProjectChange={(p) => dispatch({ type: 'replace', project: p })}
+            onClose={() => setChatOpen(false)}
+          />
+        )}
         <div className="hint">Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it</div>
       </main>
 
