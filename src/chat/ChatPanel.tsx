@@ -155,8 +155,19 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
             </Label>
             <Input
               id="api-key"
-              type="password"
+              // Not type="password": Chrome would offer to save it as a login.
+              // The dots come from CSS instead, and password managers are told to skip it.
+              type="text"
+              name="anthropic-api-key"
+              className="[-webkit-text-security:disc]"
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore
+              data-form-type="other"
               placeholder="sk-ant-…"
               value={keyDraft}
               onChange={(e) => setKeyDraft(e.target.value)}
