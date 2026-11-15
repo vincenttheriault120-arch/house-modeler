@@ -51,6 +51,10 @@ export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel, h
       <Input
         id={id}
         aria-label={label || ariaLabel}
+        autoComplete="off"
+        data-1p-ignore
+        data-lpignore="true"
+        data-form-type="other"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
