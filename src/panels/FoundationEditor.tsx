@@ -7,12 +7,14 @@ import { Segmented } from '@/components/Segmented';
 import { LengthInput } from '../LengthInput';
 import { closingGap, type Direction, type Run } from '../model/geometry';
 import { applyFoundationType, validateFoundation, type FoundationParams, type FoundationType } from '../model/foundation';
+import { LEVEL_TOLERANCE, sortLevels, type Level } from '../model/levels';
 import type { FoundationStep } from '../model/types';
 import { formatLength, type UnitSystem } from '../units';
 import { OutlinePreview } from './OutlinePreview';
 
 interface Props {
   step: FoundationStep;
+  levels: Level[];
   units: UnitSystem;
   onChange: (params: FoundationParams) => void;
 }
@@ -33,7 +35,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export function FoundationEditor({ step, units, onChange }: Props) {
+export function FoundationEditor({ step, levels, units, onChange }: Props) {
   const p = step.params;
   const set = (patch: Partial<FoundationParams>) => onChange({ ...p, ...patch });
   const setRun = (i: number, patch: Partial<Run>) =>
@@ -43,6 +45,11 @@ export function FoundationEditor({ step, units, onChange }: Props) {
   const gap = closingGap(p.runs);
   const isOpen = Math.hypot(gap.x, gap.y) > 0.5;
   const errors = validateFoundation(p);
+  const linked = levels.find((l) => l.id === p.topLevelId);
+  // The level this step most likely should follow, if it disagrees.
+  const expectedKind = isSlab ? 'garage-slab' : 'foundation-top';
+  const candidate = levels.find((l) => l.kind === expectedKind);
+  const hint = candidate && Math.abs(candidate.elevation - p.topElevation) > LEVEL_TOLERANCE ? candidate : undefined;
 
   function closeOutline() {
     const extra: Run[] = [];
@@ -162,12 +169,60 @@ export function FoundationEditor({ step, units, onChange }: Props) {
         <div className="grid grid-cols-2 gap-3">
           <LengthInput label="Thickness" valueMm={p.wallThickness} units={units} min={1} onChange={(v) => set({ wallThickness: v })} />
           <LengthInput label={isSlab ? 'Depth (0 = none)' : 'Height'} valueMm={p.wallHeight} units={units} min={0} onChange={(v) => set({ wallHeight: v })} />
-          <LengthInput label={isSlab ? 'Top of slab (grade = 0)' : 'Top elevation (grade = 0)'} valueMm={p.topElevation} units={units} onChange={(v) => set({ topElevation: v })} />
+          {linked ? (
+            <div className="grid gap-1.5">
+              <span className="text-xs text-muted-foreground">{isSlab ? 'Top of slab' : 'Top elevation'}</span>
+              <span className="flex h-8 items-center text-sm tabular-nums">{formatLength(p.topElevation, units)}</span>
+            </div>
+          ) : (
+            <LengthInput label={isSlab ? 'Top of slab (grade = 0)' : 'Top elevation (grade = 0)'} valueMm={p.topElevation} units={units} onChange={(v) => set({ topElevation: v })} />
+          )}
           <div className="grid gap-1.5">
             <span className="text-xs text-muted-foreground">Bottom elevation</span>
             <span className="flex h-8 items-center text-sm tabular-nums">{formatLength(p.topElevation - p.wallHeight, units)}</span>
           </div>
         </div>
+        {levels.length > 0 && (
+          <div className="grid gap-1.5">
+            <span className="text-xs text-muted-foreground">{isSlab ? 'Top of slab follows level' : 'Top of wall follows level'}</span>
+            <Select
+              value={linked?.id ?? 'none'}
+              onValueChange={(v) => {
+                if (v === 'none') {
+                  const { topLevelId: _off, ...rest } = p;
+                  onChange(rest);
+                } else {
+                  const l = levels.find((x) => x.id === v);
+                  if (l) set({ topLevelId: l.id, topElevation: l.elevation });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full" aria-label="Level the top follows">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None (type a height)</SelectItem>
+                {sortLevels(levels).map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name} · {formatLength(l.elevation, units)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!linked && hint && (
+              <p className="flex gap-2 rounded-md bg-warning-soft px-3 py-2 text-xs text-warning-foreground">
+                <TriangleAlert className="size-4 shrink-0" />
+                <span>
+                  Your levels put “{hint.name}” at {formatLength(hint.elevation, units)}, but this is at{' '}
+                  {formatLength(p.topElevation, units)}.{' '}
+                  <button className="font-medium underline underline-offset-2" onClick={() => set({ topLevelId: hint.id, topElevation: hint.elevation })}>
+                    Follow that level
+                  </button>
+                </span>
+              </p>
+            )}
+          </div>
+        )}
       </Section>
 
       <Separator />

@@ -8,7 +8,8 @@ import type { FloorStep, FoundationStep, Project, Step } from '../model/types';
 import type { FoundationParams } from '../model/foundation';
 import type { Run } from '../model/geometry';
 import { parseLength, type UnitSystem } from '../units';
-import { getPlanData, PLAN_KINDS, type PlanMeta } from './store';
+import { getPlanData, PLAN_KINDS, type PlanKind, type PlanMeta } from './store';
+import type { Level, LevelKind } from '../model/levels';
 
 const Length = z.object({
   value: z.string().nullable().describe('Length with units, e.g. "26\' 1\\"" or "8\\"". null if it cannot be determined at all.'),
@@ -164,7 +165,7 @@ export async function suggestFloor(opts: {
   return ask({ apiKey: opts.apiKey, system: FLOOR_SYSTEM, content, schema: FloorSuggestion, signal: opts.signal });
 }
 
-export const FLOOR_ROWS: { key: Exclude<keyof FloorParams, 'supportId' | 'joistDirection' | 'beam'>; field: keyof FloorSuggestion; label: string }[] = [
+export const FLOOR_ROWS: { key: Exclude<keyof FloorParams, 'supportId' | 'joistDirection' | 'beam' | 'levelId'>; field: keyof FloorSuggestion; label: string }[] = [
   { key: 'joistDepth', field: 'joist_depth', label: 'Joist depth' },
   { key: 'joistWidth', field: 'joist_width', label: 'Joist width' },
   { key: 'joistSpacing', field: 'joist_spacing', label: 'Joist spacing (c/c)' },
@@ -258,4 +259,116 @@ export function suggestionToDraft(
     include[row.key] = mm !== null && Math.abs(mm - current[row.key]) > 0.5;
   }
   return { params, include };
+}
+
+// ---------------------------------------------------------------------------
+// Labeling a PDF
+
+const KIND_VALUES = PLAN_KINDS.map((k) => k.value) as [PlanKind, ...PlanKind[]];
+
+export const PlanLabel = z.object({
+  kind: z.enum(KIND_VALUES).describe('The main drawing in this PDF.'),
+  also_contains: z.array(z.enum(KIND_VALUES)).describe('Other drawings on other sheets of the same PDF, if any.'),
+  title: z.string().describe('The drawing title as written on the sheet, e.g. "PLAN DU SOUS-SOL".'),
+});
+export type PlanLabel = z.infer<typeof PlanLabel>;
+
+/** Ask Claude which drawing a PDF is. Uses a small, fast model. */
+export async function labelPlan(apiKey: string, plan: PlanMeta, signal?: AbortSignal): Promise<PlanLabel> {
+  const content = await planDocuments([plan]);
+  content.push({
+    type: 'text',
+    text: `Which drawing is this? Kinds: ${PLAN_KINDS.map((k) => `${k.value} (${k.label})`).join(', ')}. For elevations, "front" faces the street. French: "élévation avant/arrière/latérale gauche/droite", "plan du sous-sol", "rez-de-chaussée", "étage", "coupe", "toiture".`,
+  });
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+  const response = await client.beta.messages.parse(
+    {
+      model: LABEL_MODEL,
+      max_tokens: 1024,
+      output_config: { format: betaZodOutputFormat(PlanLabel) },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      messages: [{ role: 'user', content }],
+    },
+    { signal },
+  );
+  if (!response.parsed_output) throw new Error("Couldn't label this plan.");
+  return response.parsed_output;
+}
+
+/** Labeling is a simple look-up, so it uses the small model. */
+export const LABEL_MODEL = 'claude-haiku-5-5';
+
+// ---------------------------------------------------------------------------
+// Levels
+
+const LEVEL_KIND_VALUES: [LevelKind, ...LevelKind[]] = ['foundation-top', 'garage-slab', 'floor', 'ceiling', 'eave', 'ridge', 'other'];
+
+export const LevelsSuggestion = z.object({
+  summary: z.string().describe('Two or three plain sentences: what was found, the datum used, and what to double-check.'),
+  levels: z.array(
+    z.object({
+      name: z.string().describe('Short name, e.g. "Ground floor", "First floor", "Top of foundation", "Roof ridge".'),
+      kind: z.enum(LEVEL_KIND_VALUES),
+      elevation: z.string().nullable().describe('Height above finished grade (grade = 0), with units. null if not found.'),
+      source: z.string().describe('Which drawing and which label, e.g. "Front elevation: N.P.F. REZ 1\'-11 1/2\"".'),
+      confident: z.boolean().describe('true only if read from a written elevation or dimension.'),
+    }),
+  ),
+});
+export type LevelsSuggestion = z.infer<typeof LevelsSuggestion>;
+
+const LEVELS_SYSTEM = `${SYSTEM}
+
+This request is for the LEVELS of the house: the key heights the rest of the model hangs on, read mostly from the elevations and sections. Give, when shown: top of foundation, garage slab, each finished floor (ground floor, first floor...), top of walls / ceiling of each storey, eave, and roof ridge. Also include any other key height that matters for this house (e.g. the green roof over the garage door).
+
+All elevations are relative to FINISHED GRADE = 0. Drawings often use another datum (e.g. ground floor = 0'-0" or 100'-0", "niveau du sol", "N.P.F." = niveau plancher fini = finished floor, "T/FDN", "dessus fondation"). Convert to grade = 0 using the grade line on the elevations; if grade isn't shown, say so in the summary and mark those values not confident. Order the levels from lowest to highest.`;
+
+export async function suggestLevels(opts: {
+  apiKey: string;
+  plans: PlanMeta[];
+  project: Project;
+  units: UnitSystem;
+  signal?: AbortSignal;
+}): Promise<LevelsSuggestion> {
+  const content = await planDocuments(opts.plans);
+  content.push({
+    type: 'text',
+    text: `Units: ${opts.units === 'imperial' ? 'feet-inches' : 'millimetres'}.
+
+Current project:
+${describeProject(opts.project, opts.units)}
+
+Propose the house's levels from the attached drawings.`,
+  });
+  return ask({ apiKey: opts.apiKey, system: LEVELS_SYSTEM, content, schema: LevelsSuggestion, signal: opts.signal });
+}
+
+/**
+ * Merge suggested levels into the current ones: a suggestion with the same
+ * kind and name (case-insensitive) updates that level; others are added.
+ * Returns one entry per suggestion, with the matched current level if any.
+ */
+export function levelsSuggestionToDraft(
+  s: LevelsSuggestion,
+  current: Level[],
+  units: UnitSystem,
+  newId: () => string,
+): { level: Level; existing?: Level; include: boolean; source: string; confident: boolean }[] {
+  const key = (l: { kind: string; name: string }) => `${l.kind}|${l.name.trim().toLowerCase()}`;
+  const byKey = new Map(current.map((l) => [key(l), l]));
+  const out = [];
+  for (const sl of s.levels) {
+    const mm = toMm(sl.elevation, units);
+    if (mm === null) continue;
+    const existing = byKey.get(key(sl));
+    out.push({
+      level: { id: existing?.id ?? newId(), name: sl.name, kind: sl.kind, elevation: mm, source: sl.source },
+      existing,
+      include: !existing || Math.abs(existing.elevation - mm) > 0.5,
+      source: sl.source,
+      confident: sl.confident,
+    });
+  }
+  return out;
 }

@@ -3,7 +3,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Segmented } from '@/components/Segmented';
 import { LengthInput } from '../LengthInput';
+import { Button } from '@/components/ui/button';
 import { floorLevels, validateFloor, type FloorParams } from '../model/floor';
+import { LEVEL_TOLERANCE, sortLevels } from '../model/levels';
 import { supportOf } from '../model/project';
 import type { FloorStep, Project } from '../model/types';
 import { formatLength, type UnitSystem } from '../units';
@@ -13,6 +15,8 @@ interface Props {
   step: FloorStep;
   units: UnitSystem;
   onChange: (params: FloorParams) => void;
+  /** Move the foundation's top by this much (to make the floor meet its level). */
+  onRaiseSupport: (byMm: number) => void;
 }
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -29,7 +33,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 
 const Grid = ({ children }: { children: React.ReactNode }) => <div className="grid grid-cols-2 gap-3">{children}</div>;
 
-export function FloorEditor({ project, step, units, onChange }: Props) {
+export function FloorEditor({ project, step, units, onChange, onRaiseSupport }: Props) {
   const p = step.params;
   const set = (patch: Partial<FloorParams>) => onChange({ ...p, ...patch });
   const support = supportOf(project, step);
@@ -37,6 +41,12 @@ export function FloorEditor({ project, step, units, onChange }: Props) {
   const errors = validateFloor(p, support);
   const lv = support ? floorLevels(p, support) : null;
   const f = (mm: number) => formatLength(mm, units);
+  const target = project.levels.find((l) => l.id === p.levelId);
+  const supportStep = project.steps.find((s) => s.id === p.supportId);
+  const supportLevel =
+    supportStep?.kind === 'foundation' ? project.levels.find((l) => l.id === supportStep.params.topLevelId) : undefined;
+  const diff = target && lv ? target.elevation - lv.floorTop : 0;
+  const off = Math.abs(diff) > LEVEL_TOLERANCE;
 
   return (
     <div className="grid gap-5">
@@ -66,6 +76,39 @@ export function FloorEditor({ project, step, units, onChange }: Props) {
         <p className="text-xs leading-relaxed text-muted-foreground">
           The floor takes its outline and height from the foundation. Elevations are from finished grade (0).
         </p>
+        {project.levels.length > 0 && (
+          <div className="grid gap-1.5">
+            <span className="text-xs text-muted-foreground">Should finish at level</span>
+            <Select value={target?.id ?? 'none'} onValueChange={(v) => set({ levelId: v === 'none' ? undefined : v })}>
+              <SelectTrigger size="sm" className="w-full" aria-label="Level this floor should finish at">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No check</SelectItem>
+                {sortLevels(project.levels).map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name} · {f(l.elevation)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {target && lv && !off && <p className="text-xs text-success">Matches “{target.name}”.</p>}
+            {target && lv && off && (
+              <div className="grid gap-2 rounded-md bg-warning-soft px-3 py-2 text-xs text-warning-foreground">
+                <p className="flex gap-2">
+                  <TriangleAlert className="size-4 shrink-0" />
+                  <span>
+                    This floor finishes at {f(lv.floorTop)}, but “{target.name}” is at {f(target.elevation)} (
+                    {f(Math.abs(diff))} {diff > 0 ? 'higher' : 'lower'}). Check the joist depth, the foundation top, or the level.
+                  </span>
+                </p>
+                <Button size="sm" variant="outline" className="h-auto justify-self-start py-1.5 text-left whitespace-normal" onClick={() => onRaiseSupport(diff)}>
+                  {diff > 0 ? 'Raise' : 'Lower'} {supportLevel ? `the “${supportLevel.name}” level` : 'the foundation'} by {f(Math.abs(diff))}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       <Separator />

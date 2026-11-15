@@ -1,6 +1,7 @@
 import type { UnitSystem } from '../units';
 import type { FloorParams } from './floor';
 import type { FoundationParams } from './foundation';
+import type { Level } from './levels';
 
 /**
  * A house is an ordered list of build steps. Each step owns its own editable
@@ -32,6 +33,8 @@ export type StepKind = Step['kind'];
 export interface Project {
   version: 1;
   name: string;
+  /** Key heights from the elevations; steps can follow them. */
+  levels: Level[];
   steps: Step[];
 }
 
@@ -44,5 +47,5 @@ export interface ViewSettings {
 }
 
 export function emptyProject(): Project {
-  return { version: 1, name: 'My house', steps: [] };
+  return { version: 1, name: 'My house', levels: [], steps: [] };
 }

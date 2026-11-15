@@ -29,6 +29,8 @@ export interface FloorParams {
   postSpacing: number;
   postSize: number;
   subfloorThickness: number;
+  /** The level this floor should finish at (top of subfloor); a mismatch shows a warning. */
+  levelId?: string;
 }
 
 const IN = 25.4;
