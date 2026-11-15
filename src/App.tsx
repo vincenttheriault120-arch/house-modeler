@@ -35,6 +35,14 @@ import { FoundationEditor } from './panels/FoundationEditor';
 import { formatLength, type UnitSystem } from './units';
 import { Viewport } from './Viewport';
 import { ChatPanel } from './chat/ChatPanel';
+import { loadApiKey } from './chat/apiKey';
+import { applyFoundationType, defaultFoundation } from './model/foundation';
+import { GuidedSteps, withNext } from './panels/GuidedSteps';
+import { PlansSection } from './plans/PlansSection';
+import { PlanViewer } from './plans/PlanViewer';
+import { SuggestDialog } from './plans/SuggestDialog';
+import type { PlanMeta } from './plans/store';
+import { usePlans } from './plans/usePlans';
 
 function PanelHeading({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{children}</h2>;
@@ -48,7 +56,12 @@ export default function App() {
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [viewKey, setViewKey] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
+  const [viewing, setViewing] = useState<PlanMeta | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const planInput = useRef<HTMLInputElement>(null);
+  const plans = usePlans();
   const units = settings.units;
 
   useEffect(() => saveAutosave(project), [project]);
@@ -66,12 +79,69 @@ export default function App() {
     if (c) setSelectedStepId(c.stepId);
   }
 
-  function addFoundation() {
+  function addFoundation(preset?: 'basement' | 'garage') {
     const id = newId();
     dispatch({ type: 'add-foundation', id });
+    if (preset === 'basement') dispatch({ type: 'update-step', id, patch: { label: 'Basement' } });
+    if (preset === 'garage') {
+      dispatch({ type: 'update-step', id, patch: { label: 'Garage slab', level: 'Ground floor' } });
+      dispatch({ type: 'update-foundation', id, params: applyFoundationType(defaultFoundation(), 'slab-on-grade') });
+    }
     setSelectedStepId(id);
+    setSelectedComponentId(null);
     setViewKey((k) => k + 1);
   }
+
+  function startSuggest() {
+    if (!loadApiKey()) {
+      setNotice('Claude needs your API key first. Add it in the Ask Claude panel (it stays in this browser), then try again.');
+      setChatOpen(true);
+      return;
+    }
+    if (plans.plans.length === 0) {
+      setNotice('Add your plan PDFs first (left panel, under Plans).');
+      return;
+    }
+    setNotice(null);
+    setSuggesting(true);
+  }
+
+  const foundations = project.steps.filter((s) => s.kind === 'foundation');
+  const guides = withNext(
+    [
+      {
+        id: 'plans',
+        title: 'Import your plans',
+        detail: 'Add the PDF plans and say what each one shows.',
+        action: { label: 'Add plan PDFs', run: () => planInput.current?.click() },
+      },
+      {
+        id: 'basement',
+        title: 'Basement foundation',
+        detail: 'Outline, walls, footing and slab. Use “Suggest from plans” to pre-fill, then check each value.',
+        action: { label: 'Add the basement', run: () => addFoundation('basement') },
+      },
+      {
+        id: 'slab',
+        title: 'Garage slab on grade',
+        detail: 'Frost walls and the slab beside the basement.',
+        action: { label: 'Add the garage slab', run: () => addFoundation('garage') },
+      },
+      { id: 'floor0', title: 'Floor over the basement', detail: 'Joists, beam and subfloor. Coming next.' },
+      { id: 'walls0', title: 'Ground floor walls', detail: 'Exterior walls, openings. Coming soon.' },
+      { id: 'floor1', title: 'First floor, with the cantilever', detail: 'Over the garage, overhanging at the back. Coming soon.' },
+      { id: 'roof', title: 'Roofs and the green roof', detail: 'Including the mini green roof over the garage door. Coming soon.' },
+    ],
+    {
+      plans: plans.plans.length > 0,
+      basement: foundations.some((s) => s.params.type === 'basement'),
+      slab: foundations.some((s) => s.params.type === 'slab-on-grade'),
+      floor0: 'soon',
+      walls0: 'soon',
+      floor1: 'soon',
+      roof: 'soon',
+    },
+  );
 
   async function openFile(file: File) {
     try {
@@ -167,6 +237,34 @@ export default function App() {
 
       {/* Left: steps and components */}
       <aside className="grid content-start gap-5 overflow-y-auto border-b bg-background p-4 md:border-r md:border-b-0">
+        <section className="grid gap-2">
+          <PanelHeading>Guide</PanelHeading>
+          <GuidedSteps guides={guides} />
+        </section>
+
+        <Separator />
+
+        <section className="grid gap-3">
+          <div className="flex items-center gap-2">
+            <PanelHeading>Plans</PanelHeading>
+            {plans.plans.length > 0 && <Badge variant="secondary">{plans.plans.length}</Badge>}
+          </div>
+          <PlansSection
+            inputRef={planInput}
+            plans={plans.plans}
+            error={plans.error}
+            onAdd={(f) => {
+              setNotice(null);
+              plans.add(f);
+            }}
+            onUpdate={plans.update}
+            onRemove={plans.remove}
+            onView={setViewing}
+          />
+        </section>
+
+        <Separator />
+
         <section className="grid gap-3">
           <PanelHeading>Build steps</PanelHeading>
           {project.steps.length === 0 && (
@@ -209,7 +307,7 @@ export default function App() {
               </li>
             ))}
           </ol>
-          <Button onClick={addFoundation}>
+          <Button variant={project.steps.length ? 'outline' : 'default'} onClick={() => addFoundation()}>
             <Plus /> Add foundation
           </Button>
         </section>
@@ -280,6 +378,7 @@ export default function App() {
             onClose={() => setChatOpen(false)}
           />
         )}
+        {viewing && <PlanViewer plan={viewing} onClose={() => setViewing(null)} />}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-background/85 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
           Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it
         </div>
@@ -337,6 +436,13 @@ export default function App() {
             />
           </div>
 
+          <div className="grid gap-2">
+            <Button variant="outline" onClick={startSuggest}>
+              <Sparkles /> Suggest from plans
+            </Button>
+            {notice && <p className="rounded-md bg-muted px-3 py-2 text-xs leading-relaxed">{notice}</p>}
+          </div>
+
           <FoundationEditor
             step={selectedStep}
             units={units}
@@ -380,6 +486,21 @@ export default function App() {
             </Button>
           </div>
         </aside>
+      )}
+
+      {suggesting && selectedStep && (
+        <SuggestDialog
+          apiKey={loadApiKey()}
+          plans={plans.plans}
+          project={project}
+          step={selectedStep}
+          units={units}
+          onApply={(params) => {
+            dispatch({ type: 'update-foundation', id: selectedStep.id, params });
+            setViewKey((k) => k + 1);
+          }}
+          onClose={() => setSuggesting(false)}
+        />
       )}
     </div>
   );

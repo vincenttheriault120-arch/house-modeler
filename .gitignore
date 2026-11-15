@@ -3,6 +3,6 @@ dist
 *.local
 .DS_Store
 # Never commit personal house plans or project files
-plans/
+/plans/
 *.pdf
 *.tsbuildinfo
