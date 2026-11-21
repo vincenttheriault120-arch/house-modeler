@@ -1,4 +1,5 @@
 import type { UnitSystem } from '../units';
+import type { Check } from './checks';
 import type { FloorParams } from './floor';
 import type { FoundationParams } from './foundation';
 import type { Level } from './levels';
@@ -43,6 +44,8 @@ export interface Project {
   /** Key heights from the elevations; steps can follow them. */
   levels: Level[];
   steps: Step[];
+  /** Measurements checked against the plans, by measurement id. */
+  checks?: Record<string, Check>;
 }
 
 export interface ViewSettings {

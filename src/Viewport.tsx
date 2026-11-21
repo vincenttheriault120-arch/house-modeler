@@ -3,9 +3,11 @@ import { Edges, GizmoHelper, GizmoViewcube, Grid, Html, Line, OrbitControls, Ort
 import { useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
+import { cn } from '@/lib/utils';
 import type { Component } from './model/component';
 import type { LengthDimension, LevelMark, Point3 } from './model/dimensions';
 import type { SheetView } from './model/calibration';
+import type { MeasureState } from './model/checks';
 import { formatLength, type UnitSystem } from './units';
 import { componentGeometry, materialFor } from './scene/meshes';
 
@@ -20,6 +22,12 @@ interface Props {
   clay?: boolean;
   /** Measurements to draw on the model. */
   dimensions?: { lengths: LengthDimension[]; levels: LevelMark[] };
+  /** How each measurement stands against the plans (dimension and `level:<id>` ids). */
+  checkStates?: Record<string, MeasureState>;
+  /** The measurement being checked, drawn highlighted. */
+  activeCheck?: string | null;
+  /** Clicking a measurement's label picks it for checking. */
+  onPickCheck?: (id: string) => void;
   units?: UnitSystem;
   /** A calibrated plan laid over the model, seen straight on. */
   backdrop?: Backdrop;
@@ -42,7 +50,7 @@ export interface Backdrop {
  * The 3D view. Scene units are metres. Y is up and grade is at 0. To reset
  * the camera, remount this component.
  */
-export function Viewport({ dark = false, components, gridSpacing, selectedId, onSelect, clay = false, dimensions, units = 'imperial', backdrop }: Props) {
+export function Viewport({ dark = false, components, gridSpacing, selectedId, onSelect, clay = false, dimensions, units = 'imperial', backdrop, checkStates, activeCheck, onPickCheck }: Props) {
   const cell = gridSpacing / 1000;
   // Frame the measurements too, with room for the level names left of their marker.
   const extra = useMemo(
@@ -72,7 +80,9 @@ export function Viewport({ dark = false, components, gridSpacing, selectedId, on
         />
       ))}
 
-      {dimensions && <Dimensions {...dimensions} units={units} dark={dark} />}
+      {dimensions && (
+        <Dimensions {...dimensions} units={units} dark={dark} states={checkStates} active={activeCheck ?? null} onPick={onPickCheck} />
+      )}
       {backdrop && <PlanSheet backdrop={backdrop} />}
 
       <Grid
@@ -182,7 +192,55 @@ function signed(mm: number, units: UnitSystem) {
 const labelClass =
   'pointer-events-none select-none whitespace-nowrap rounded-md border px-1.5 py-0.5 text-xs font-medium tabular-nums shadow-sm';
 
-function Dimensions({ lengths, levels, units, dark }: { lengths: LengthDimension[]; levels: LevelMark[]; units: UnitSystem; dark: boolean }) {
+const STATE_PILL: Partial<Record<MeasureState, string>> = {
+  matches: 'border-green-600 bg-green-50 text-green-900 dark:bg-green-950 dark:text-green-100',
+  differs: 'border-red-600 bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-100',
+  changed: 'border-amber-500 bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-100',
+};
+const STATE_MARK: Partial<Record<MeasureState, string>> = { matches: '✓ ', differs: '✕ ', changed: '↻ ' };
+const ACTIVE = '#1d4ed8';
+
+function Dimensions({
+  lengths,
+  levels,
+  units,
+  dark,
+  states = {},
+  active,
+  onPick,
+}: {
+  lengths: LengthDimension[];
+  levels: LevelMark[];
+  units: UnitSystem;
+  dark: boolean;
+  states?: Record<string, MeasureState>;
+  active: string | null;
+  onPick?: (id: string) => void;
+}) {
+  /** A label: a button when measurements can be picked, coloured by how it stands. */
+  const label = (id: string, children: React.ReactNode, extra = '') => {
+    const st = states[id];
+    const cls = cn(
+      labelClass,
+      (st && STATE_PILL[st]) || pill,
+      id === active && 'ring-2 ring-blue-700 ring-offset-1',
+      onPick && 'pointer-events-auto cursor-pointer hover:border-blue-700',
+      extra,
+    );
+    const body = (
+      <>
+        {st && STATE_MARK[st]}
+        {children}
+      </>
+    );
+    return onPick ? (
+      <button type="button" className={cls} onClick={() => onPick(id)} title="Check this against the plans">
+        {body}
+      </button>
+    ) : (
+      <div className={cls}>{body}</div>
+    );
+  };
   const ink = dark ? '#e7e5e4' : '#1c1917';
   const faint = dark ? '#78716c' : '#a8a29e';
   const pill = dark ? 'border-stone-600 bg-stone-900/90 text-stone-100' : 'border-stone-300 bg-white/95 text-stone-900';
@@ -206,11 +264,11 @@ function Dimensions({ lengths, levels, units, dark }: { lengths: LengthDimension
           <group key={d.id}>
             <Line points={[toScene(d.from[0]), a]} color={faint} lineWidth={1} />
             <Line points={[toScene(d.from[1]), b]} color={faint} lineWidth={1} />
-            <Line points={[a, b]} color={ink} lineWidth={1.5} />
-            <Tick at={a} color={ink} />
-            <Tick at={b} color={ink} />
+            <Line points={[a, b]} color={d.id === active ? ACTIVE : ink} lineWidth={d.id === active ? 3 : 1.5} />
+            <Tick at={a} color={d.id === active ? ACTIVE : ink} />
+            <Tick at={b} color={d.id === active ? ACTIVE : ink} />
             <Html position={mid} center zIndexRange={[20, 0]}>
-              <div className={`${labelClass} ${pill}`}>{formatLength(d.mm, units)}</div>
+              {label(d.id, formatLength(d.mm, units))}
             </Html>
           </group>
         );
@@ -222,9 +280,19 @@ function Dimensions({ lengths, levels, units, dark }: { lengths: LengthDimension
           <group key={l.id}>
             <Line points={[[p[0] - 0.25, p[1], p[2]], [p[0] + 0.6, p[1], p[2]]]} color={ink} lineWidth={2} />
             <Html position={p} zIndexRange={[20, 0]}>
-              <div className={`${labelClass} ${pill} -translate-x-[calc(100%+0.75rem)] -translate-y-1/2`}>
-                {l.name} <span className="opacity-70">{signed(l.elevation, units)}</span>
-              </div>
+              {l.id === 'grade' ? (
+                <div className={cn(labelClass, pill, '-translate-x-[calc(100%+0.75rem)] -translate-y-1/2')}>
+                  {l.name} <span className="opacity-70">{signed(l.elevation, units)}</span>
+                </div>
+              ) : (
+                label(
+                  `level:${l.id}`,
+                  <>
+                    {l.name} <span className="opacity-70">{signed(l.elevation, units)}</span>
+                  </>,
+                  'block -translate-x-[calc(100%+0.75rem)] -translate-y-1/2',
+                )
+              )}
             </Html>
           </group>
         );

@@ -49,6 +49,8 @@ import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import { setActivePlanStore, type PlanMeta, type PlanStore } from './plans/store';
 import { usePlans } from './plans/usePlans';
 import { comparablePlans, planLabel, useCompare } from './plans/useCompare';
+import { measureState, measures, summarize } from './model/checks';
+import { ChecksPanel } from './panels/ChecksPanel';
 import { LevelsSection } from './panels/LevelsSection';
 import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
 import { defaultFloor } from './model/floor';
@@ -120,6 +122,20 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
 
   const allComponents = useMemo(() => buildComponents(project), [project]);
   const dimensions = useMemo(() => ({ lengths: lengthDimensions(project), levels: levelMarks(project) }), [project]);
+  const measureList = useMemo(() => measures(project), [project]);
+  const checks = useMemo(() => project.checks ?? {}, [project.checks]);
+  const checkStates = useMemo(() => Object.fromEntries(measureList.map((m) => [m.id, measureState(m, checks[m.id])])), [measureList, checks]);
+  const checkSummary = summarize(measureList, checks);
+  const [activeCheck, setActiveCheck] = useState<string | null>(null);
+  const checksRef = useRef<HTMLElement>(null);
+
+  /** Pick a measurement to check: show the dimensions and bring the panel into view. */
+  function pickCheck(id: string | null) {
+    setActiveCheck(id);
+    if (!id) return;
+    if (!settings.showDimensions) setSettings({ ...settings, showDimensions: true });
+    requestAnimationFrame(() => checksRef.current?.querySelector('[aria-expanded="true"]')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  }
   const visibleSteps = new Set(project.steps.filter((s) => s.visible).map((s) => s.id));
   const components = allComponents.filter(
     (c) => visibleSteps.has(c.stepId) && (settings.showSubfloor || c.kind !== 'subfloor'),
@@ -236,6 +252,18 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
         detail: 'Sill plate, joists, beam and posts, subfloor. Sets the ground floor height.',
         action: basement ? { label: 'Add the floor', run: () => addAndSuggest(() => addFloor(basement.id)) } : undefined,
       },
+      {
+        id: 'check',
+        title: 'Check the shell against your plans',
+        detail:
+          checkSummary.total === 0
+            ? 'Mark each side and level as matching the plans or not.'
+            : `${checkSummary.matches + checkSummary.differs} of ${checkSummary.total} measurements checked${checkSummary.differs ? `, ${checkSummary.differs} differ` : ''}. Lay a plan over the model with Compare with plan to see differences.`,
+        action: {
+          label: 'Check the next one',
+          run: () => pickCheck(measureList.find((m) => checkStates[m.id] === 'unchecked' || checkStates[m.id] === 'changed')?.id ?? null),
+        },
+      },
       { id: 'walls0', title: 'Ground floor walls', detail: 'Exterior walls, openings. Coming next.' },
       { id: 'floor1', title: 'First floor, with the cantilever', detail: 'Over the garage, overhanging at the back. Coming soon.' },
       { id: 'roof', title: 'Roofs and the green roof', detail: 'Including the mini green roof over the garage door. Coming soon.' },
@@ -246,6 +274,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
       basement: foundations.some((s) => s.params.type === 'basement'),
       slab: foundations.some((s) => s.params.type === 'slab-on-grade'),
       floor0: hasFloorOverBasement,
+      check: checkSummary.total > 0 && checkSummary.open === 0,
       walls0: 'soon',
       floor1: 'soon',
       roof: 'soon',
@@ -332,6 +361,23 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
         </section>
 
         <Separator />
+
+        <section className="grid gap-2" ref={checksRef}>
+          <div className="flex items-center gap-2">
+            <PanelHeading>Checks</PanelHeading>
+            {checkSummary.differs > 0 && <Badge variant="destructive">{checkSummary.differs} {checkSummary.differs === 1 ? 'differs' : 'differ'}</Badge>}
+          </div>
+          <ChecksPanel
+            measures={measureList}
+            checks={checks}
+            plans={plans.plans}
+            units={units}
+            activeId={activeCheck}
+            comparePlanId={compare.planId}
+            onActivate={pickCheck}
+            onCheck={(id, check) => dispatch({ type: 'set-check', id, check })}
+          />
+        </section>
 
         <section className="grid gap-3">
           <div className="flex items-center gap-2">
@@ -495,6 +541,9 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           dimensions={settings.showDimensions ? dimensions : undefined}
           units={units}
           backdrop={compare.backdrop}
+          checkStates={checkStates}
+          activeCheck={activeCheck}
+          onPickCheck={pickCheck}
         />
         <div className="absolute top-3 left-3 flex flex-wrap items-center gap-1.5">
           <Button
