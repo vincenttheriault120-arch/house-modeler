@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mmPerUnit, sheetPlacement, sheetToModel, viewForKind, type Bounds, type Calibration } from './calibration';
+import { addShift, inSheet, mmPerUnit, sheetPlacement, sheetToModel, snapToTarget, viewForKind, type Bounds, type Calibration } from './calibration';
 
 const FT = 304.8;
 // 1/4" = 1'-0": 18 PDF units (1/4 inch) per foot.
@@ -42,5 +42,31 @@ describe('plan calibration', () => {
     expect(viewForKind('ground-floor')).toBe('top');
     expect(viewForKind('elevation-left')).toBe('left');
     expect(viewForKind('section')).toBeNull();
+  });
+});
+
+describe('moving a sheet into line', () => {
+  it('keeps only the part of a move that lies in the sheet', () => {
+    expect(inSheet('top', { x: 10, y: 20, z: 30 })).toEqual({ x: 10, y: 20, z: 0 });
+    expect(inSheet('front', { x: 10, y: 20, z: 30 })).toEqual({ x: 10, y: 0, z: 30 });
+    expect(inSheet('left', { x: 10, y: 20, z: 30 })).toEqual({ x: 0, y: 20, z: 30 });
+  });
+
+  it('moves the placed sheet by its saved shift', () => {
+    const c: Calibration = { page: 1, a: { x: 0, y: 100 }, b: { x: 100, y: 100 }, mm: 1000 };
+    const b = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    const before = sheetPlacement('top', c, b, 200, 200).center;
+    const after = sheetPlacement('top', addShift(addShift(c, { x: 5, y: 0, z: 0 }), { x: 0, y: -7, z: 0 }), b, 200, 200).center;
+    expect(after.x - before.x).toBeCloseTo(5);
+    expect(after.y - before.y).toBeCloseTo(-7);
+  });
+
+  it('snaps to the nearest corner within reach', () => {
+    const targets = [
+      { x: 0, y: 0, z: 0 },
+      { x: 5000, y: 0, z: 0 },
+    ];
+    expect(snapToTarget('top', { x: 4800, y: 150, z: 999 }, targets, 600)).toEqual({ x: 5000, y: 0, z: 0 });
+    expect(snapToTarget('top', { x: 2500, y: 0, z: 0 }, targets, 600)).toBeNull();
   });
 });

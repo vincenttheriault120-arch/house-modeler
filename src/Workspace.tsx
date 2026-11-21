@@ -3,6 +3,8 @@ import {
   ArrowDown,
   ArrowUp,
   Box,
+  Crosshair,
+  Move,
   Eye,
   EyeOff,
   HardDrive,
@@ -49,7 +51,7 @@ import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import { setActivePlanStore, type PlanMeta, type PlanStore } from './plans/store';
 import { usePlans } from './plans/usePlans';
 import { comparablePlans, planLabel, useCompare } from './plans/useCompare';
-import { viewForKind } from './model/calibration';
+import { SCREEN_AXES, viewForKind } from './model/calibration';
 import { measureState, measures, summarize } from './model/checks';
 import { ChecksPanel } from './panels/ChecksPanel';
 import { InteriorPhase } from './interior/InteriorPhase';
@@ -99,7 +101,28 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
     return () => setActivePlanStore(null);
   }, [planStore]);
   const plans = usePlans(planStore);
-  const compare = useCompare(project, plans.plans);
+  const compare = useCompare(project, plans.plans, plans.calibrate);
+
+  // Moving the plan: arrow keys nudge it 1" (Shift: 1'), along the screen.
+  useEffect(() => {
+    if (compare.mode !== 'move' || !compare.view) return;
+    const axes = SCREEN_AXES[compare.view];
+    function onKey(e: KeyboardEvent) {
+      if ((e.target as HTMLElement)?.closest('input, textarea, select')) return;
+      const dir = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+      if (!dir) return;
+      e.preventDefault();
+      const step = e.shiftKey ? 304.8 : 25.4;
+      const [r, u] = dir;
+      compare.shiftBy({
+        x: (axes.right.x * r + axes.up.x * u) * step,
+        y: (axes.right.y * r + axes.up.y * u) * step,
+        z: (axes.right.z * r + axes.up.z * u) * step,
+      });
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
   const comparable = comparablePlans(plans.plans);
   /** Floor plans and elevations that could be compared once their scale is set. */
   const needScale = plans.plans.filter((p) => !p.calibration && viewForKind(p.kind));
@@ -578,7 +601,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           clay={settings.clay}
           dimensions={settings.showDimensions ? dimensions : undefined}
           units={units}
-          backdrop={compare.backdrop}
+          backdrop={compare.backdrop && { ...compare.backdrop, onPick: compare.pick, onDrag: compare.drag }}
           checkStates={checkStates}
           activeCheck={activeCheck}
           onPickCheck={pickCheck}
@@ -668,7 +691,32 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
                   className="w-20 accent-blue-700"
                 />
               </label>
-              <Button size="sm" variant="outline" className="bg-background" onClick={() => compare.setPlanId(null)}>
+              <Button
+                size="sm"
+                variant={compare.mode === 'align' ? 'default' : 'outline'}
+                className={cn(compare.mode !== 'align' && 'bg-background')}
+                aria-pressed={compare.mode === 'align'}
+                onClick={() => compare.setMode(compare.mode === 'align' ? 'view' : 'align')}
+                title="Click a point on the plan, then the matching corner of the model."
+              >
+                <Crosshair /> Align
+              </Button>
+              <Button
+                size="sm"
+                variant={compare.mode === 'move' ? 'default' : 'outline'}
+                className={cn(compare.mode !== 'move' && 'bg-background')}
+                aria-pressed={compare.mode === 'move'}
+                onClick={() => compare.setMode(compare.mode === 'move' ? 'view' : 'move')}
+                title="Drag the plan, or nudge it with the arrow keys (Shift for 1')."
+              >
+                <Move /> Move
+              </Button>
+              {compare.moved && (
+                <Button size="sm" variant="outline" className="bg-background" onClick={compare.resetPosition} title="Put the plan back where Set scale placed it.">
+                  <RotateCcw /> Reset
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="bg-background" onClick={() => (compare.setMode('view'), compare.setPlanId(null))}>
                 Back to 3D
               </Button>
             </>
@@ -704,7 +752,13 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
         )}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-background/85 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
           {compare.backdrop
-            ? 'Plan lines in blue over the model · Drag: pan · Scroll: zoom'
+            ? compare.mode === 'align'
+              ? compare.alignFrom
+                ? '2. Now click the matching corner on the model (it snaps to the nearest corner)'
+                : '1. Click a corner on the plan you can also see on the model · Right-drag: pan · Scroll: zoom'
+              : compare.mode === 'move'
+                ? 'Drag the plan into place · Arrow keys: nudge 1" (Shift: 1\') · Right-drag: pan'
+                : 'Plan lines in blue over the model · Drag: pan · Scroll: zoom'
             : 'Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it'}
         </div>
       </main>
