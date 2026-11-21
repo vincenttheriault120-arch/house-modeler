@@ -103,6 +103,8 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   const comparable = comparablePlans(plans.plans);
   /** Floor plans and elevations that could be compared once their scale is set. */
   const needScale = plans.plans.filter((p) => !p.calibration && viewForKind(p.kind));
+  /** Plans whose label (section, other…) can't be laid over the model. */
+  const cantCompare = plans.plans.filter((p) => !viewForKind(p.kind));
   const addedNewPlans = useRef(false);
   useEffect(() => {
     if (addedNewPlans.current || !newPlans?.length) return;
@@ -635,8 +637,22 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
                 ))}
               </optgroup>
             )}
+            {cantCompare.length > 0 && (
+              <optgroup label="Can't be laid over the model (relabel under Plans)">
+                {cantCompare.map((p) => (
+                  <option key={p.id} value="" disabled>
+                    {p.name}: {planLabel(p)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
             {plans.plans.length === 0 && <option value="add">Add plan PDFs…</option>}
           </select>
+          {plans.plans.length > 0 && comparable.length === 0 && needScale.length === 0 && (
+            <span className="rounded-md bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-xs">
+              Label a plan as a floor plan or an elevation (left panel, Plans) to compare it.
+            </span>
+          )}
           {compare.planId && (
             <>
               <label className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs text-muted-foreground shadow-xs">
