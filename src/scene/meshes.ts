@@ -3,6 +3,7 @@ import type { Component, MaterialId } from '../model/component';
 
 /** Display colours for each material. Real textures come later. */
 export const MATERIALS: Record<MaterialId, { name: string; color: string; roughness: number }> = {
+  drywall: { name: 'Drywall (interior wall)', color: '#ecebe7', roughness: 0.9 },
   concrete: { name: 'Concrete (wall)', color: '#b9bcbf', roughness: 0.9 },
   'concrete-footing': { name: 'Concrete (footing)', color: '#9a9ea3', roughness: 0.95 },
   slab: { name: 'Concrete (slab)', color: '#cfd2d4', roughness: 0.85 },

@@ -23,8 +23,8 @@ export function inkToAlpha(data: Uint8ClampedArray, color = PLAN_LINE_COLOR) {
   }
 }
 
-/** One page of a plan as a texture of its lines, plus the page size in PDF units. */
-export async function loadPlanTexture(planId: string, pageNumber: number) {
+/** One page of a plan drawn as coloured lines on a clear canvas, plus the page size in PDF units. */
+export async function renderPlanLines(planId: string, pageNumber: number) {
   const data = await getPlanData(planId);
   if (!data) throw new Error('This plan is no longer stored with the project.');
   const task = pdfjs.getDocument({ data: new Uint8Array(data) });
@@ -44,11 +44,25 @@ export async function loadPlanTexture(planId: string, pageNumber: number) {
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
     inkToAlpha(img.data);
     ctx.putImageData(img, 0, 0);
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 8;
-    return { texture, width: unit.width, height: unit.height };
+    return { canvas, width: unit.width, height: unit.height };
   } finally {
     task.destroy();
   }
+}
+
+/** One page of a plan as a texture of its lines, plus the page size in PDF units. */
+export async function loadPlanTexture(planId: string, pageNumber: number) {
+  const { canvas, width, height } = await renderPlanLines(planId, pageNumber);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return { texture, width, height };
+}
+
+/** One page of a plan as an image URL of its lines (revoke it when done). */
+export async function loadPlanImage(planId: string, pageNumber: number) {
+  const { canvas, width, height } = await renderPlanLines(planId, pageNumber);
+  const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, 'image/png'));
+  if (!blob) throw new Error("Couldn't draw that plan.");
+  return { url: URL.createObjectURL(blob), width, height };
 }
