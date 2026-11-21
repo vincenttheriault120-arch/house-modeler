@@ -62,6 +62,11 @@ export function usePlans(store: PlanStore) {
       await store.update({ ...meta, labeledBy: undefined });
       refresh();
     },
+    /** Save a sheet's scale (keeps Claude's label). */
+    async calibrate(meta: PlanMeta) {
+      await store.update(meta);
+      refresh();
+    },
     async remove(id: string) {
       await store.remove(id);
       refresh();

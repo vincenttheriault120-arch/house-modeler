@@ -48,6 +48,7 @@ import { SuggestDialog } from './plans/SuggestDialog';
 import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import { setActivePlanStore, type PlanMeta, type PlanStore } from './plans/store';
 import { usePlans } from './plans/usePlans';
+import { comparablePlans, planLabel, useCompare } from './plans/useCompare';
 import { LevelsSection } from './panels/LevelsSection';
 import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
 import { defaultFloor } from './model/floor';
@@ -92,6 +93,8 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
     return () => setActivePlanStore(null);
   }, [planStore]);
   const plans = usePlans(planStore);
+  const compare = useCompare(project, plans.plans);
+  const comparable = comparablePlans(plans.plans);
   const addedNewPlans = useRef(false);
   useEffect(() => {
     if (addedNewPlans.current || !newPlans?.length) return;
@@ -491,8 +494,9 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           clay={settings.clay}
           dimensions={settings.showDimensions ? dimensions : undefined}
           units={units}
+          backdrop={compare.backdrop}
         />
-        <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
+        <div className="absolute top-3 left-3 flex flex-wrap items-center gap-1.5">
           <Button
             size="sm"
             variant={settings.clay ? 'default' : 'outline'}
@@ -511,6 +515,42 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           >
             <Ruler /> Dimensions
           </Button>
+          <select
+            aria-label="Compare with plan"
+            className="h-8 rounded-md border bg-background px-2 text-sm shadow-xs"
+            value={compare.planId ?? ''}
+            onChange={(e) => compare.setPlanId(e.target.value || null)}
+            title={comparable.length === 0 ? 'Open a plan and use Set scale to compare it with the model.' : undefined}
+          >
+            <option value="">{comparable.length === 0 ? 'Compare with plan (set a scale first)' : 'Compare with plan…'}</option>
+            {comparable.map((p) => (
+              <option key={p.id} value={p.id}>
+                {planLabel(p)}
+              </option>
+            ))}
+          </select>
+          {compare.planId && (
+            <>
+              <label className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs text-muted-foreground shadow-xs">
+                Plan
+                <input
+                  type="range"
+                  min={0.15}
+                  max={1}
+                  step={0.05}
+                  value={compare.opacity}
+                  aria-label="Plan opacity"
+                  onChange={(e) => compare.setOpacity(Number(e.target.value))}
+                  className="w-20 accent-blue-700"
+                />
+              </label>
+              <Button size="sm" variant="outline" className="bg-background" onClick={() => compare.setPlanId(null)}>
+                Back to 3D
+              </Button>
+            </>
+          )}
+          {compare.loading && <span className="text-xs text-muted-foreground">Loading plan…</span>}
+          {compare.error && <span className="text-xs text-destructive">{compare.error}</span>}
         </div>
         {chatOpen && (
           <ChatPanel
@@ -520,9 +560,21 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
             onClose={() => setChatOpen(false)}
           />
         )}
-        {viewing && <PlanViewer plan={viewing} onClose={() => setViewing(null)} />}
+        {viewing && (
+          <PlanViewer
+            plan={viewing}
+            units={units}
+            onClose={() => setViewing(null)}
+            onCalibrate={(meta) => {
+              plans.calibrate(meta);
+              setViewing(meta);
+            }}
+          />
+        )}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-background/85 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
-          Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it
+          {compare.backdrop
+            ? 'Plan lines in blue over the model · Drag: pan · Scroll: zoom'
+            : 'Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it'}
         </div>
       </main>
 

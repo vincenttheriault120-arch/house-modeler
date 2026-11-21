@@ -1,9 +1,11 @@
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
-import { Edges, GizmoHelper, GizmoViewcube, Grid, Html, Line, OrbitControls } from '@react-three/drei';
+import { Edges, GizmoHelper, GizmoViewcube, Grid, Html, Line, OrbitControls, OrthographicCamera } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import type { Component } from './model/component';
 import type { LengthDimension, LevelMark, Point3 } from './model/dimensions';
+import type { SheetView } from './model/calibration';
 import { formatLength, type UnitSystem } from './units';
 import { componentGeometry, materialFor } from './scene/meshes';
 
@@ -19,13 +21,28 @@ interface Props {
   /** Measurements to draw on the model. */
   dimensions?: { lengths: LengthDimension[]; levels: LevelMark[] };
   units?: UnitSystem;
+  /** A calibrated plan laid over the model, seen straight on. */
+  backdrop?: Backdrop;
+}
+
+export interface Backdrop {
+  texture: THREE.Texture;
+  view: SheetView;
+  /** The sheet's centre and size in the model, mm. */
+  center: Point3;
+  width: number;
+  height: number;
+  opacity: number;
+  /** What to frame: the middle of the model and how big it is, mm. */
+  focus: Point3;
+  span: number;
 }
 
 /**
  * The 3D view. Scene units are metres. Y is up and grade is at 0. To reset
  * the camera, remount this component.
  */
-export function Viewport({ dark = false, components, gridSpacing, selectedId, onSelect, clay = false, dimensions, units = 'imperial' }: Props) {
+export function Viewport({ dark = false, components, gridSpacing, selectedId, onSelect, clay = false, dimensions, units = 'imperial', backdrop }: Props) {
   const cell = gridSpacing / 1000;
   // Frame the measurements too, with room for the level names left of their marker.
   const extra = useMemo(
@@ -56,6 +73,7 @@ export function Viewport({ dark = false, components, gridSpacing, selectedId, on
       ))}
 
       {dimensions && <Dimensions {...dimensions} units={units} dark={dark} />}
+      {backdrop && <PlanSheet backdrop={backdrop} />}
 
       <Grid
         args={[200, 200]}
@@ -70,7 +88,11 @@ export function Viewport({ dark = false, components, gridSpacing, selectedId, on
         infiniteGrid
       />
 
-      <OrbitControls makeDefault enableDamping target={view.target} />
+      {backdrop ? (
+        <CompareCamera backdrop={backdrop} />
+      ) : (
+        <OrbitControls makeDefault enableDamping target={view.target} />
+      )}
       <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
         <GizmoViewcube />
       </GizmoHelper>
@@ -215,4 +237,64 @@ function Dimensions({ lengths, levels, units, dark }: { lengths: LengthDimension
 function Tick({ at, color }: { at: [number, number, number]; color: string }) {
   const r = 0.15;
   return <Line points={[[at[0], at[1] - r, at[2]], [at[0], at[1] + r, at[2]]]} color={color} lineWidth={2} />;
+}
+
+/** Which way the camera looks from, and which way is up on screen, for each flat view (scene axes). */
+const VIEW_AXES: Record<SheetView, { from: [number, number, number]; up: [number, number, number] }> = {
+  top: { from: [0, 1, 0], up: [0, 0, -1] },
+  front: { from: [0, 0, 1], up: [0, 1, 0] },
+  back: { from: [0, 0, -1], up: [0, 1, 0] },
+  left: { from: [-1, 0, 0], up: [0, 1, 0] },
+  right: { from: [1, 0, 0], up: [0, 1, 0] },
+};
+
+/** Turns a plane facing +Z so it faces the camera of each view, with the sheet's right going the right way. */
+const SHEET_ROTATION: Record<SheetView, [number, number, number]> = {
+  top: [-Math.PI / 2, 0, 0],
+  front: [0, 0, 0],
+  back: [0, Math.PI, 0],
+  left: [0, -Math.PI / 2, 0],
+  right: [0, Math.PI / 2, 0],
+};
+
+/** The plan's lines, drawn over the model so differences show. */
+function PlanSheet({ backdrop }: { backdrop: Backdrop }) {
+  return (
+    <mesh position={toScene(backdrop.center)} rotation={SHEET_ROTATION[backdrop.view]} renderOrder={10}>
+      <planeGeometry args={[backdrop.width / 1000, backdrop.height / 1000]} />
+      <meshBasicMaterial
+        map={backdrop.texture}
+        transparent
+        opacity={backdrop.opacity}
+        depthTest={false}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+}
+
+/** A flat (orthographic) camera square to the sheet, framing the model; pan and zoom only. */
+function CompareCamera({ backdrop }: { backdrop: Backdrop }) {
+  const size = useThree((s) => s.size);
+  const axes = VIEW_AXES[backdrop.view];
+  const target = toScene(backdrop.focus);
+  const d = 200;
+  const position: [number, number, number] = [target[0] + axes.from[0] * d, target[1] + axes.from[1] * d, target[2] + axes.from[2] * d];
+  const span = Math.max(backdrop.span / 1000, 4) * 1.35;
+  const zoom = Math.min(size.width, size.height) / span;
+  return (
+    <>
+      <OrthographicCamera makeDefault position={position} up={axes.up} zoom={zoom} near={0.1} far={1000} />
+      <OrbitControls
+        makeDefault
+        enableRotate={false}
+        enableDamping
+        target={target}
+        mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
+        touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }}
+      />
+    </>
+  );
 }
