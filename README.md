@@ -12,6 +12,8 @@ A browser tool for modeling a house **step by step** in 2D and 3D: foundation, t
 - Steps can be renamed, assigned a level, hidden, reordered or deleted, with notes for specs
 - **Projects:** the app opens on your projects. Work on several houses side by side, duplicate one to try a variant, or open a `.house.json` file as a new project. Each project keeps its own model and plans, and saves as you work.
 - **Projects on your computer (Chrome and Edge):** pick a folder and each project becomes a real folder in it: `project.house.json` plus a `plans/` folder with your PDFs. Other folders in there are left alone. Projects can also stay in the browser, and you can copy them either way.
+- **New project wizard:** name, units and where to save, then start **from your plans** (drop in the PDFs; a checklist shows which sheets Phase 1 uses) or **from scratch** (pick a rectangle, L or T footprint, overall size, storeys and basement or slab; the footprint becomes the first foundation).
+- **Phases:** a bar across the top shows the five phases every project goes through: exterior shell, interior layout, structure, finishes, share. Today's tools live in Phase 1; the others arrive in later updates.
 - **Save to file** downloads the `.house.json` project file at any time
 - **Export to Blender:** downloads a `.glb`. In Blender: File → Import → glTF 2.0. Units are metres, pieces are named and grouped by step.
 - **Ask Claude:** a chat panel that can add and change steps for you ("make the garage a slab on grade, 18' 1\" by 39' 1 1/2\""). Every change can be undone with one click. Uses your own Anthropic API key, stored only in your browser (create one at console.anthropic.com; pay per use).

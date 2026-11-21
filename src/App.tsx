@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { parseProject } from './model/project';
-import { emptyProject, type Project } from './model/types';
+import type { Project } from './model/types';
 import Workspace from './Workspace';
 import { Home } from './projects/Home';
 import { browserRepo } from './projects/browserRepo';
 import { folderRepo } from './projects/folderRepo';
 import { loadFolder, pickFolder, reconnectFolder, type FolderState } from './projects/folderAccess';
 import { migrateLegacy } from './projects/migrate';
+import { NewProjectWizard } from './projects/NewProjectWizard';
+import { starterProject } from './projects/starter';
 import { copyProject, type Location, type ProjectRepo, type ProjectSummary } from './projects/types';
 
 interface OpenProject {
   location: Location;
   id: string;
   project: Project;
+  /** PDFs picked in the new-project wizard, added (and labelled) once the project opens. */
+  newPlans?: File[];
 }
 
 const NEW_LOCATION_KEY = 'house-modeler:new-location';
@@ -35,6 +39,7 @@ export default function App() {
   const [folderProjects, setFolderProjects] = useState<ProjectSummary[]>([]);
   const [open, setOpen] = useState<OpenProject | null>(null);
   const [ready, setReady] = useState(false);
+  const [wizard, setWizard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newLocation, setNewLocation] = useState<Location>(
@@ -59,12 +64,12 @@ export default function App() {
     } else setFolderProjects([]);
   }, [fRepo]);
 
-  async function openProject(location: Location, id: string, repo = repoFor(location)) {
+  async function openProject(location: Location, id: string, repo = repoFor(location), newPlans?: File[]) {
     if (!repo) return;
     try {
       const project = await repo.load(id);
       setError(null);
-      setOpen({ location, id, project });
+      setOpen({ location, id, project, newPlans });
       writeHash({ location, id });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't open that project.");
@@ -130,6 +135,7 @@ export default function App() {
         whereLabel={open.location === 'browser' ? 'this browser' : `folder “${open.id}”`}
         onSave={save}
         planStore={planStore}
+        newPlans={open.newPlans}
         onHome={() => {
           setOpen(null);
           writeHash(null);
@@ -140,6 +146,25 @@ export default function App() {
 
   const target = (): { where: Location; repo: ProjectRepo } =>
     newLocation === 'folder' && fRepo ? { where: 'folder', repo: fRepo } : { where: 'browser', repo: browserRepo };
+
+  if (wizard) {
+    return (
+      <NewProjectWizard
+        folderReady={!!fRepo}
+        folderName={folder.status === 'ready' ? folder.name : ''}
+        initialWhere={fRepo ? newLocation : 'browser'}
+        onCancel={() => setWizard(false)}
+        onFinish={(options, plans, where) =>
+          withBusy(async () => {
+            const repo = where === 'folder' && fRepo ? fRepo : browserRepo;
+            const id = await repo.create(starterProject(options));
+            setWizard(false);
+            await openProject(repo.location, id, repo, plans);
+          })
+        }
+      />
+    );
+  }
 
   return (
     <Home
@@ -161,13 +186,7 @@ export default function App() {
       }
       onReconnect={() => withBusy(async () => setFolder(await reconnectFolder()))}
       onOpen={(p) => withBusy(() => openProject(p.location, p.id))}
-      onCreate={(name, where) =>
-        withBusy(async () => {
-          const repo = where === 'folder' && fRepo ? fRepo : browserRepo;
-          const id = await repo.create({ ...emptyProject(), name });
-          await openProject(repo.location, id, repo);
-        })
-      }
+      onStartNew={() => setWizard(true)}
       onImportFile={(file) =>
         withBusy(async () => {
           const project = parseProject(await file.text());

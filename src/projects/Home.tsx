@@ -1,8 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { Box, Copy, FolderInput, FolderOpen, FolderSync, Globe, HardDrive, Moon, Plus, Sun, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Segmented } from '@/components/Segmented';
 import { cn } from '@/lib/utils';
 import { useTheme } from '../theme';
@@ -20,7 +18,7 @@ interface Props {
   onPickFolder: () => void;
   onReconnect: () => void;
   onOpen: (p: ProjectSummary) => void;
-  onCreate: (name: string, where: Location) => void;
+  onStartNew: () => void;
   onImportFile: (file: File) => void;
   onDuplicate: (p: ProjectSummary) => void;
   onCopyTo: (p: ProjectSummary, to: Location) => void;
@@ -47,7 +45,6 @@ function plural(n: number, one: string, many = `${one}s`) {
 export function Home(props: Props) {
   const { folder, browserProjects, folderProjects, busy, error } = props;
   const { dark, toggle: toggleTheme } = useTheme();
-  const [creating, setCreating] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderReady = folder.status === 'ready';
   const folderName = folder.status === 'ready' || folder.status === 'needs-permission' ? folder.name : '';
@@ -73,7 +70,7 @@ export function Home(props: Props) {
             <Button variant="outline" onClick={() => fileInput.current?.click()} disabled={busy}>
               <Upload /> Open from file…
             </Button>
-            <Button onClick={() => setCreating(true)} disabled={busy}>
+            <Button onClick={props.onStartNew} disabled={busy}>
               <Plus /> New project
             </Button>
             <input
@@ -122,7 +119,7 @@ export function Home(props: Props) {
 
         {browserProjects.length === 0 && folderProjects.length === 0 && (
           <button
-            onClick={() => setCreating(true)}
+            onClick={props.onStartNew}
             className="grid min-h-40 place-items-center rounded-xl border-2 border-dashed text-muted-foreground hover:bg-background"
           >
             <span className="grid justify-items-center gap-1">
@@ -133,18 +130,6 @@ export function Home(props: Props) {
         )}
       </main>
 
-      {creating && (
-        <NewProjectDialog
-          folderReady={folderReady}
-          folderName={folderName}
-          initialWhere={folderReady ? props.newLocation : 'browser'}
-          onCancel={() => setCreating(false)}
-          onCreate={(name, where) => {
-            setCreating(false);
-            props.onCreate(name, where);
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -275,64 +260,5 @@ function ProjectSection(
         </ul>
       )}
     </section>
-  );
-}
-
-function NewProjectDialog({
-  folderReady,
-  folderName,
-  initialWhere,
-  onCancel,
-  onCreate,
-}: {
-  folderReady: boolean;
-  folderName: string;
-  initialWhere: Location;
-  onCancel: () => void;
-  onCreate: (name: string, where: Location) => void;
-}) {
-  const [name, setName] = useState('');
-  const [where, setWhere] = useState<Location>(initialWhere);
-  const finalName = name.trim() || 'My house';
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="New project">
-      <form
-        className="grid w-full max-w-md gap-4 rounded-xl border bg-background p-6 shadow-lg"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onCreate(finalName, where);
-        }}
-        onKeyDown={(e) => e.key === 'Escape' && onCancel()}
-      >
-        <h2 className="text-lg font-semibold">New project</h2>
-        <div className="grid gap-1.5">
-          <Label htmlFor="new-project-name">Project name</Label>
-          <Input id="new-project-name" autoFocus placeholder="My house" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        {folderReady && (
-          <div className="grid gap-1.5">
-            <span className="text-sm font-medium">Save in</span>
-            <Segmented<Location>
-              label="Save in"
-              value={where}
-              onChange={setWhere}
-              options={[
-                { value: 'folder', label: `Folder “${folderName}”` },
-                { value: 'browser', label: 'This browser' },
-              ]}
-            />
-          </div>
-        )}
-        <p className={cn('text-sm text-muted-foreground')}>
-          You'll start with an empty model. Choosing between your plans and a blank start comes in the next update.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit">Create</Button>
-        </div>
-      </form>
-    </div>
   );
 }

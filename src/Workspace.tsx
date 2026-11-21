@@ -51,6 +51,7 @@ import { LevelsSection } from './panels/LevelsSection';
 import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
 import { defaultFloor } from './model/floor';
 import { sortLevels } from './model/levels';
+import { PhaseBar, PhasePlaceholder } from './phases';
 
 function PanelHeading({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{children}</h2>;
@@ -62,11 +63,13 @@ interface WorkspaceProps {
   whereLabel: string;
   onSave: (project: Project) => Promise<void>;
   planStore: PlanStore;
+  /** PDFs from the new-project wizard, to add once on open. */
+  newPlans?: File[];
   onHome: () => void;
 }
 
 /** One open project: build steps, plans and the 3D view. */
-export default function Workspace({ initial, whereLabel, onSave, planStore, onHome }: WorkspaceProps) {
+export default function Workspace({ initial, whereLabel, onSave, planStore, newPlans, onHome }: WorkspaceProps) {
   const [settings, setSettings] = useViewSettings();
   const { dark, toggle: toggleTheme } = useTheme();
   const [project, dispatch] = useReducer(reducer, initial);
@@ -87,6 +90,14 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, onHo
     return () => setActivePlanStore(null);
   }, [planStore]);
   const plans = usePlans(planStore);
+  const addedNewPlans = useRef(false);
+  useEffect(() => {
+    if (addedNewPlans.current || !newPlans?.length) return;
+    addedNewPlans.current = true;
+    plans.add(newPlans);
+    // Only once, when the project first opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newPlans]);
   const units = settings.units;
 
   // Save shortly after each change, to wherever this project is kept.
@@ -235,15 +246,12 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, onHo
     },
   );
 
+  const phase = project.phase ?? 1;
+
   return (
-    <div
-      className={cn(
-        'grid h-full grid-rows-[auto_1fr] grid-cols-1 md:grid-cols-[18rem_1fr]',
-        selectedStep && 'lg:grid-cols-[18rem_1fr_22rem]',
-      )}
-    >
+    <div className="flex h-full flex-col">
       {/* Top bar */}
-      <header className="col-span-full flex flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
+      <header className="flex flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
         <Button variant="ghost" size="sm" onClick={onHome} aria-label="All projects">
           <House /> Projects
         </Button>
@@ -298,6 +306,17 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, onHo
           {dark ? <Sun /> : <Moon />}
         </Button>
       </header>
+      <PhaseBar phase={phase} onChange={(p) => dispatch({ type: 'set-phase', phase: p })} />
+
+      {phase !== 1 ? (
+        <PhasePlaceholder phase={phase} onBack={() => dispatch({ type: 'set-phase', phase: 1 })} />
+      ) : (
+      <div
+        className={cn(
+          'grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_1fr] md:grid-rows-[minmax(0,1fr)]',
+          selectedStep && 'lg:grid-cols-[18rem_1fr_22rem]',
+        )}
+      >
 
       {/* Left: steps and components */}
       <aside className="grid min-w-0 content-start gap-5 overflow-x-hidden overflow-y-auto border-b bg-background p-4 md:border-r md:border-b-0 [&>*]:min-w-0">
@@ -655,6 +674,8 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, onHo
           onApply={(params) => dispatch({ type: 'update-floor', id: selectedStep.id, params })}
           onClose={() => setSuggesting(false)}
         />
+      )}
+      </div>
       )}
     </div>
   );
