@@ -51,6 +51,7 @@ import { usePlans } from './plans/usePlans';
 import { comparablePlans, planLabel, useCompare } from './plans/useCompare';
 import { measureState, measures, summarize } from './model/checks';
 import { ChecksPanel } from './panels/ChecksPanel';
+import { InteriorPhase } from './interior/InteriorPhase';
 import { LevelsSection } from './panels/LevelsSection';
 import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
 import { defaultFloor } from './model/floor';
@@ -122,7 +123,8 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
 
   const allComponents = useMemo(() => buildComponents(project), [project]);
   const dimensions = useMemo(() => ({ lengths: lengthDimensions(project), levels: levelMarks(project) }), [project]);
-  const measureList = useMemo(() => measures(project), [project]);
+  // Room sizes are checked in Phase 2, with the rooms.
+  const measureList = useMemo(() => measures(project).filter((m) => m.group !== 'rooms'), [project]);
   const checks = useMemo(() => project.checks ?? {}, [project.checks]);
   const checkStates = useMemo(() => Object.fromEntries(measureList.map((m) => [m.id, measureState(m, checks[m.id])])), [measureList, checks]);
   const checkSummary = summarize(measureList, checks);
@@ -138,7 +140,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   }
   const visibleSteps = new Set(project.steps.filter((s) => s.visible).map((s) => s.id));
   const components = allComponents.filter(
-    (c) => visibleSteps.has(c.stepId) && (settings.showSubfloor || c.kind !== 'subfloor'),
+    (c) => (visibleSteps.has(c.stepId) || c.stepId.startsWith('interior:')) && (settings.showSubfloor || c.kind !== 'subfloor'),
   );
   const selectedStep = project.steps.find((s) => s.id === selectedStepId) ?? null;
   const selectedComponent = allComponents.find((c) => c.id === selectedComponentId) ?? null;
@@ -343,7 +345,18 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
       </header>
       <PhaseBar phase={phase} onChange={(p) => dispatch({ type: 'set-phase', phase: p })} />
 
-      {phase !== 1 ? (
+      {phase === 2 ? (
+        <InteriorPhase
+          project={project}
+          onCheck={(id, check) => dispatch({ type: 'set-check', id, check })}
+          onLayout={(storey, layout) => dispatch({ type: 'set-interior', storey, layout })}
+          plans={plans.plans}
+          onCalibrate={plans.calibrate}
+          components={allComponents.filter((c) => c.kind !== 'subfloor' || settings.showSubfloor)}
+          units={units}
+          dark={dark}
+        />
+      ) : phase !== 1 ? (
         <PhasePlaceholder phase={phase} onBack={() => dispatch({ type: 'set-phase', phase: 1 })} />
       ) : (
       <div

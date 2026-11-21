@@ -1,6 +1,7 @@
 import { lengthDimensions, type LengthDimension } from './dimensions';
 import { sortLevels } from './levels';
 import type { Project } from './types';
+import { STOREYS, roomSize, type StoreyId } from './interior';
 
 /**
  * Checking the model against the plans, one measurement at a time.
@@ -27,7 +28,7 @@ export interface Check {
 }
 
 export type Side = 'front' | 'back' | 'left' | 'right';
-export type MeasureGroup = 'footprint' | 'levels';
+export type MeasureGroup = 'footprint' | 'levels' | 'rooms';
 
 export interface Measure {
   id: string;
@@ -39,6 +40,9 @@ export interface Measure {
   /** The step it belongs to, for footprint sides. */
   stepId?: string;
   side?: Side;
+  /** The storey and room it belongs to, for room sizes. */
+  storey?: StoreyId;
+  roomId?: string;
 }
 
 export type MeasureState = 'matches' | 'differs' | 'changed' | 'unchecked';
@@ -75,6 +79,14 @@ export function measures(project: Project): Measure[] {
   }));
   for (const l of sortLevels(project.levels)) {
     out.push({ id: `level:${l.id}`, group: 'levels', label: l.name, value: l.elevation });
+  }
+  for (const s of STOREYS) {
+    for (const r of project.interior?.[s.id]?.rooms ?? []) {
+      const { width, depth } = roomSize(r);
+      const base = { group: 'rooms' as const, storey: s.id, roomId: r.id };
+      out.push({ ...base, id: `room:${s.id}:${r.id}:w`, label: `${r.name} · width`, value: width });
+      out.push({ ...base, id: `room:${s.id}:${r.id}:d`, label: `${r.name} · depth`, value: depth });
+    }
   }
   return out;
 }

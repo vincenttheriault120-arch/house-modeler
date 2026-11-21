@@ -1,5 +1,6 @@
 import type { UnitSystem } from '../units';
 import type { Check } from './checks';
+import type { StoreyId, StoreyLayout } from './interior';
 import type { FloorParams } from './floor';
 import type { FoundationParams } from './foundation';
 import type { Level } from './levels';
@@ -46,6 +47,8 @@ export interface Project {
   steps: Step[];
   /** Measurements checked against the plans, by measurement id. */
   checks?: Record<string, Check>;
+  /** Phase 2: interior walls and rooms, per storey. */
+  interior?: Partial<Record<StoreyId, StoreyLayout>>;
 }
 
 export interface ViewSettings {

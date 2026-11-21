@@ -3,6 +3,7 @@ import { buildFloor, defaultFloor, type FloorParams } from './floor';
 import { buildFoundation, defaultFoundation, type FoundationParams } from './foundation';
 import type { Check } from './checks';
 import type { Level } from './levels';
+import { interiorComponents, type StoreyId, type StoreyLayout } from './interior';
 import { emptyProject, type FloorStep, type FoundationStep, type Project, type Step } from './types';
 
 export function newId(): string {
@@ -23,6 +24,7 @@ export type Action =
   | { type: 'rename-project'; name: string }
   | { type: 'set-phase'; phase: NonNullable<Project['phase']> }
   | { type: 'set-check'; id: string; check: Check | null }
+  | { type: 'set-interior'; storey: StoreyId; layout: StoreyLayout }
   | { type: 'replace'; project: Project };
 
 /**
@@ -125,6 +127,8 @@ function baseReducer(state: Project, action: Action): Project {
       return { ...state, name: action.name };
     case 'set-phase':
       return { ...state, phase: action.phase };
+    case 'set-interior':
+      return { ...state, interior: { ...state.interior, [action.storey]: action.layout } };
     case 'set-check': {
       const { [action.id]: _old, ...rest } = state.checks ?? {};
       return { ...state, checks: action.check ? { ...rest, [action.id]: action.check } : rest };
@@ -141,6 +145,7 @@ export function buildComponents(project: Project): Component[] {
     if (step.kind === 'foundation') out.push(...buildFoundation(step.id, step.label, step.params));
     else if (step.kind === 'floor') out.push(...buildFloor(step.id, step.label, step.params, supportOf(project, step)));
   }
+  out.push(...interiorComponents(project));
   return out;
 }
 
