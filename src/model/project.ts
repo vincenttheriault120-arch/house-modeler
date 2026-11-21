@@ -160,23 +160,3 @@ export function parseProject(json: string): Project {
     }),
   };
 }
-
-const AUTOSAVE_KEY = 'house-modeler:project';
-
-export function loadAutosave(): Project {
-  try {
-    const raw = localStorage.getItem(AUTOSAVE_KEY);
-    if (raw) return parseProject(raw);
-  } catch {
-    // Missing or unreadable: start fresh.
-  }
-  return emptyProject();
-}
-
-export function saveAutosave(project: Project) {
-  try {
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(project));
-  } catch {
-    // Storage blocked: the person can still use Save to file.
-  }
-}

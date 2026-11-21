@@ -77,69 +77,37 @@ export function guessKind(fileName: string): PlanKind {
   return 'other';
 }
 
-const DB = 'house-modeler-plans';
-const META = 'meta';
-const FILES = 'files';
-
-function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(META, { keyPath: 'id' });
-      req.result.createObjectStore(FILES);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+/**
+ * Where the open project's plans live: the browser (IndexedDB) or the
+ * project's folder on this computer. Set by the workspace when a project opens.
+ */
+export interface PlanStore {
+  list(): Promise<PlanMeta[]>;
+  /** Store a PDF. `base` keeps a label when copying a plan between projects. */
+  add(file: File, base?: Partial<Pick<PlanMeta, 'kind' | 'contains' | 'labeledBy'>>): Promise<PlanMeta>;
+  update(meta: PlanMeta): Promise<void>;
+  remove(id: string): Promise<void>;
+  data(id: string): Promise<ArrayBuffer | undefined>;
 }
 
-function tx<T>(stores: string[], mode: IDBTransactionMode, fn: (t: IDBTransaction) => IDBRequest<T> | void): Promise<T | undefined> {
-  return open().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const t = db.transaction(stores, mode);
-        const req = fn(t);
-        t.oncomplete = () => resolve(req ? req.result : undefined);
-        t.onerror = () => reject(t.error);
-        t.onabort = () => reject(t.error);
-      }),
-  );
-}
-
-export async function listPlans(): Promise<PlanMeta[]> {
-  const all = (await tx<PlanMeta[]>([META], 'readonly', (t) => t.objectStore(META).getAll())) ?? [];
-  return all.sort((a, b) => a.addedAt - b.addedAt);
-}
-
-export async function addPlan(file: File): Promise<PlanMeta> {
-  const meta: PlanMeta = {
+export function newPlanMeta(file: File, base: Partial<PlanMeta> = {}): PlanMeta {
+  return {
     id: Math.random().toString(36).slice(2, 10),
     name: file.name.replace(/\.pdf$/i, ''),
     kind: guessKind(file.name),
     size: file.size,
     addedAt: Date.now(),
+    ...base,
   };
-  const data = await file.arrayBuffer();
-  await tx([META, FILES], 'readwrite', (t) => {
-    t.objectStore(META).put(meta);
-    t.objectStore(FILES).put(data, meta.id);
-  });
-  return meta;
 }
 
-export async function updatePlan(meta: PlanMeta): Promise<void> {
-  await tx([META], 'readwrite', (t) => {
-    t.objectStore(META).put(meta);
-  });
+let active: PlanStore | null = null;
+
+export function setActivePlanStore(store: PlanStore | null) {
+  active = store;
 }
 
-export async function deletePlan(id: string): Promise<void> {
-  await tx([META, FILES], 'readwrite', (t) => {
-    t.objectStore(META).delete(id);
-    t.objectStore(FILES).delete(id);
-  });
-}
-
+/** Bytes of a plan in the open project. */
 export async function getPlanData(id: string): Promise<ArrayBuffer | undefined> {
-  return tx<ArrayBuffer>([FILES], 'readonly', (t) => t.objectStore(FILES).get(id));
+  return active ? active.data(id) : undefined;
 }
