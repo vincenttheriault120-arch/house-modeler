@@ -30,6 +30,8 @@ export interface Calibration {
   b: PagePoint;
   /** The real length between A and B. */
   mm: number;
+  /** How far the person moved the sheet after setting the scale, mm in the model. */
+  shift?: Point3;
 }
 
 /** Which way the model is seen when this sheet is laid over it. */
@@ -111,9 +113,64 @@ export function sheetToModel(view: SheetView, c: Calibration, bounds: Bounds, p:
 /** The whole sheet as a rectangle in the model: its centre and size in mm. */
 export function sheetPlacement(view: SheetView, c: Calibration, bounds: Bounds, pageWidth: number, pageHeight: number) {
   const k = mmPerUnit(c);
+  const mid = sheetToModel(view, c, bounds, { x: pageWidth / 2, y: pageHeight / 2 });
+  const d = c.shift ?? { x: 0, y: 0, z: 0 };
   return {
-    center: sheetToModel(view, c, bounds, { x: pageWidth / 2, y: pageHeight / 2 }),
+    center: { x: mid.x + d.x, y: mid.y + d.y, z: mid.z + d.z },
     width: pageWidth * k,
     height: pageHeight * k,
   };
+}
+
+/** Directions on screen for a view, in the model: which way is right and which way is up. */
+export const SCREEN_AXES: Record<SheetView, { right: Point3; up: Point3 }> = {
+  top: { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 } },
+  front: { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  back: { right: { x: -1, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  left: { right: { x: 0, y: -1, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  right: { right: { x: 0, y: 1, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+};
+
+/** Keep only the part of a move that lies in the sheet (the depth axis of the view is dropped). */
+export function inSheet(view: SheetView, d: Point3): Point3 {
+  const { right, up } = SCREEN_AXES[view];
+  const r = d.x * right.x + d.y * right.y + d.z * right.z;
+  const u = d.x * up.x + d.y * up.y + d.z * up.z;
+  return { x: right.x * r + up.x * u, y: right.y * r + up.y * u, z: right.z * r + up.z * u };
+}
+
+export function addShift(c: Calibration, d: Point3): Calibration {
+  const s = c.shift ?? { x: 0, y: 0, z: 0 };
+  return { ...c, shift: { x: s.x + d.x, y: s.y + d.y, z: s.z + d.z } };
+}
+
+/**
+ * Model points worth lining a sheet up to, as seen in that view: footprint
+ * corners from above; on an elevation, each corner's edge at grade, at the
+ * top of the foundation and at every level.
+ */
+export function alignTargets(project: Project, view: SheetView): Point3[] {
+  const corners: Point3[] = [];
+  const heights = new Set<number>([0, ...project.levels.map((l) => l.elevation)]);
+  for (const s of project.steps) {
+    if (s.kind !== 'foundation' || !s.visible) continue;
+    heights.add(s.params.topElevation);
+    for (const p of outlineWithSources(s.params.runs, s.params.origin).poly) corners.push({ x: p.x, y: p.y, z: 0 });
+  }
+  if (view === 'top') return corners;
+  const out: Point3[] = [];
+  for (const c of corners) for (const z of heights) out.push({ ...c, z });
+  return out;
+}
+
+/** The nearest target to a point, measured in the sheet's plane, if within reach. */
+export function snapToTarget(view: SheetView, p: Point3, targets: Point3[], reach: number): Point3 | null {
+  let best: Point3 | null = null;
+  let bestD = reach;
+  for (const t of targets) {
+    const d = inSheet(view, { x: t.x - p.x, y: t.y - p.y, z: t.z - p.z });
+    const len = Math.hypot(d.x, d.y, d.z);
+    if (len < bestD) (best = t), (bestD = len);
+  }
+  return best;
 }

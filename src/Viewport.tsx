@@ -1,7 +1,7 @@
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
 import { Edges, GizmoHelper, GizmoViewcube, Grid, Html, Line, OrbitControls, OrthographicCamera } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { cn } from '@/lib/utils';
 import type { Component } from './model/component';
@@ -44,6 +44,13 @@ export interface Backdrop {
   /** What to frame: the middle of the model and how big it is, mm. */
   focus: Point3;
   span: number;
+  /** view: look only; move: drag the sheet; align: click points on it. */
+  mode?: 'view' | 'move' | 'align';
+  /** The point picked first when aligning. */
+  marker?: Point3 | null;
+  onPick?: (p: Point3) => void;
+  /** While dragging: the move so far; done on release. */
+  onDrag?: (d: Point3, done: boolean) => void;
 }
 
 /**
@@ -325,9 +332,63 @@ const SHEET_ROTATION: Record<SheetView, [number, number, number]> = {
   right: [0, Math.PI / 2, 0],
 };
 
-/** The plan's lines, drawn over the model so differences show. */
+const fromScene = (v: THREE.Vector3): Point3 => ({ x: v.x * 1000, y: -v.z * 1000, z: v.y * 1000 });
+
+/** The plan's lines, drawn over the model so differences show. In move or align mode, it takes the clicks. */
 function PlanSheet({ backdrop }: { backdrop: Backdrop }) {
+  const start = useRef<Point3 | null>(null);
+  const axis = VIEW_AXES[backdrop.view].from;
+  // Where the pointer's ray meets the sheet's plane (works off the sheet's edges too).
+  const hitPlane = (e: ThreeEvent<PointerEvent>) => {
+    const c = toScene(backdrop.center);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...axis), new THREE.Vector3(...c));
+    const out = new THREE.Vector3();
+    return e.ray.intersectPlane(plane, out) ? fromScene(out) : null;
+  };
+  const active = backdrop.mode === 'move' || backdrop.mode === 'align';
+  const m = backdrop.marker;
   return (
+    <>
+      {active && (
+        // A large invisible catcher in the sheet's plane, so clicks and drags land anywhere.
+        <mesh
+          position={toScene(backdrop.center)}
+          rotation={SHEET_ROTATION[backdrop.view]}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            const p = hitPlane(e);
+            if (!p) return;
+            if (backdrop.mode === 'align') backdrop.onPick?.(p);
+            else {
+              start.current = p;
+              (e.target as Element).setPointerCapture?.(e.pointerId);
+            }
+          }}
+          onPointerMove={(e) => {
+            if (!start.current) return;
+            const p = hitPlane(e);
+            if (p) backdrop.onDrag?.({ x: p.x - start.current.x, y: p.y - start.current.y, z: p.z - start.current.z }, false);
+          }}
+          onPointerUp={(e) => {
+            if (!start.current) return;
+            const p = hitPlane(e);
+            const s = start.current;
+            start.current = null;
+            (e.target as Element).releasePointerCapture?.(e.pointerId);
+            backdrop.onDrag?.(p ? { x: p.x - s.x, y: p.y - s.y, z: p.z - s.z } : { x: 0, y: 0, z: 0 }, true);
+          }}
+        >
+          <planeGeometry args={[1000, 1000]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
+      {m && (
+        <mesh position={toScene(m)} rotation={SHEET_ROTATION[backdrop.view]} renderOrder={12}>
+          <ringGeometry args={[0.12, 0.2, 32]} />
+          <meshBasicMaterial color="#dc2626" depthTest={false} transparent />
+        </mesh>
+      )}
     <mesh position={toScene(backdrop.center)} rotation={SHEET_ROTATION[backdrop.view]} renderOrder={10}>
       <planeGeometry args={[backdrop.width / 1000, backdrop.height / 1000]} />
       <meshBasicMaterial
@@ -340,6 +401,7 @@ function PlanSheet({ backdrop }: { backdrop: Backdrop }) {
         toneMapped={false}
       />
     </mesh>
+    </>
   );
 }
 
@@ -360,7 +422,8 @@ function CompareCamera({ backdrop }: { backdrop: Backdrop }) {
         enableRotate={false}
         enableDamping
         target={target}
-        mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
+        // While moving or aligning the plan, the left button belongs to the plan; pan with the right.
+        mouseButtons={{ LEFT: backdrop.mode === 'move' || backdrop.mode === 'align' ? (-1 as THREE.MOUSE) : THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
         touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }}
       />
     </>
