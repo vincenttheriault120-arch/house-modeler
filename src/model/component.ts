@@ -11,7 +11,7 @@ export interface Component {
   id: string;
   stepId: string;
   name: string;
-  kind: 'foundation-wall' | 'footing' | 'slab' | 'sill' | 'rim-joist' | 'joist' | 'beam' | 'post' | 'subfloor' | 'interior-wall';
+  kind: 'foundation-wall' | 'footing' | 'slab' | 'sill' | 'rim-joist' | 'joist' | 'beam' | 'post' | 'subfloor' | 'interior-wall' | 'stair';
   material: MaterialId;
   outline: Vec2[];
   bottom: number;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Box, Check, MousePointer2, Ruler, Square, SquareDashed, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, Check, DoorOpen, FlipHorizontal2, FlipVertical2, Footprints, MousePointer2, Ruler, Square, SquareDashed, Trash2 } from 'lucide-react';
+import { Segmented } from '@/components/Segmented';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,9 @@ import {
   storeyHeights,
   wallLength,
   withLength,
+  stairFit,
+  type Door,
+  type Heading as StairHeading,
   type StoreyId,
   type StoreyLayout,
 } from '../model/interior';
@@ -25,10 +29,13 @@ import { PlanViewer } from '../plans/PlanViewer';
 import type { PlanMeta } from '../plans/store';
 import { formatLength, type UnitSystem } from '../units';
 import { Viewport } from '../Viewport';
-import { PlanEditor, type Selection, type Tool, type Underlay } from './PlanEditor';
+import { PlanEditor, removeFrom, type Selection, type Tool, type Underlay } from './PlanEditor';
+import { ChecksPanel } from '../panels/ChecksPanel';
+import { measures, type Check as CheckMark } from '../model/checks';
 
 interface Props {
   project: Project;
+  onCheck: (id: string, check: CheckMark | null) => void;
   onLayout: (storey: StoreyId, layout: StoreyLayout) => void;
   plans: PlanMeta[];
   onCalibrate: (meta: PlanMeta) => void;
@@ -38,12 +45,19 @@ interface Props {
 }
 
 const TOOLS: { id: Tool; label: string; icon: React.ReactNode; hint: string }[] = [
-  { id: 'select', label: 'Select', icon: <MousePointer2 />, hint: 'Click a wall or room to edit it. Drag to move around, scroll to zoom.' },
+  { id: 'select', label: 'Select', icon: <MousePointer2 />, hint: 'Click a wall, door, stair or room to edit it. Delete removes it. Drag to move around, scroll to zoom.' },
   {
     id: 'wall',
     label: 'Wall',
     icon: <Square />,
     hint: 'Click where the wall starts, then each corner. It snaps to corners, wall faces and square angles. Double-click or Esc to stop.',
+  },
+  { id: 'door', label: 'Door', icon: <DoorOpen />, hint: 'Click on a wall where the door goes. Then type its exact position and width.' },
+  {
+    id: 'stair',
+    label: 'Stair',
+    icon: <Footprints />,
+    hint: 'Click the corner where the stair starts (the bottom step), then the opposite corner at the top. It climbs along its longer side.',
   },
   {
     id: 'room',
@@ -61,11 +75,12 @@ function storeyPlan(plans: PlanMeta[], storey: StoreyId) {
 }
 
 /** Phase 2: interior walls and rooms, one storey at a time, over its floor plan. */
-export function InteriorPhase({ project, onLayout, plans, onCalibrate, components, units, dark }: Props) {
+export function InteriorPhase({ project, onCheck, onLayout, plans, onCalibrate, components, units, dark }: Props) {
   const hasBasement = project.steps.some((s) => s.kind === 'foundation' && s.params.type === 'basement');
   const [storey, setStorey] = useState<StoreyId>(hasBasement ? 'basement' : 'ground-floor');
   const [tool, setTool] = useState<Tool>('wall');
   const [thickness, setThickness] = useState(DEFAULT_WALL);
+  const [doorKind, setDoorKind] = useState<Door['kind']>('door');
   const [selected, setSelected] = useState<Selection>(null);
   const [planOpacity, setPlanOpacity] = useState(0.7);
   const [show3d, setShow3d] = useState(true);
@@ -110,6 +125,14 @@ export function InteriorPhase({ project, onLayout, plans, onCalibrate, component
 
   const wall = selected?.type === 'wall' ? layout.walls.find((w) => w.id === selected.id) : undefined;
   const room = selected?.type === 'room' ? layout.rooms.find((r) => r.id === selected.id) : undefined;
+  const door = selected?.type === 'door' ? layout.doors?.find((d) => d.id === selected.id) : undefined;
+  const doorWall = door ? layout.walls.find((w) => w.id === door.wallId) : undefined;
+  const stair = selected?.type === 'stair' ? layout.stairs?.find((x) => x.id === selected.id) : undefined;
+  const fit = stair ? stairFit(project, storey, stair) : null;
+  const updateDoor = (patch: Partial<Door>) => door && setLayout({ ...layout, doors: (layout.doors ?? []).map((d) => (d.id === door.id ? { ...d, ...patch } : d)) });
+  const updateStair = (patch: Partial<NonNullable<typeof stair>>) => stair && setLayout({ ...layout, stairs: (layout.stairs ?? []).map((x) => (x.id === stair.id ? { ...x, ...patch } : x)) });
+  const roomMeasures = useMemo(() => measures(project).filter((m) => m.group === 'rooms' && m.storey === storey), [project, storey]);
+  const [activeCheck, setActiveCheck] = useState<string | null>(null);
   const totalArea = layout.rooms.reduce((a, r) => a + roomArea(r), 0);
 
   return (
@@ -156,6 +179,17 @@ export function InteriorPhase({ project, onLayout, plans, onCalibrate, component
             ))}
           </div>
           <p className="text-xs leading-snug text-muted-foreground">{TOOLS.find((t) => t.id === tool)!.hint}</p>
+          {tool === 'door' && (
+            <Segmented<Door['kind']>
+              label="What the Door tool places"
+              value={doorKind}
+              onChange={setDoorKind}
+              options={[
+                { value: 'door', label: 'Door' },
+                { value: 'opening', label: 'Opening' },
+              ]}
+            />
+          )}
           {tool === 'wall' && <LengthInput label="New wall thickness" valueMm={thickness} units={units} onChange={setThickness} min={25} hint="4 1/2&quot; is a 2x4 wall with drywall both sides." />}
         </section>
 
@@ -163,7 +197,7 @@ export function InteriorPhase({ project, onLayout, plans, onCalibrate, component
           <section className="grid gap-2 rounded-lg border p-3">
             <div className="flex items-center justify-between">
               <Heading>Selected wall</Heading>
-              <Button variant="ghost" size="icon" className="size-7" aria-label="Delete wall" onClick={() => (setLayout({ ...layout, walls: layout.walls.filter((w) => w.id !== wall.id) }), setSelected(null))}>
+              <Button variant="ghost" size="icon" className="size-7" aria-label="Delete wall" onClick={() => (setLayout(removeFrom(layout, { type: 'wall', id: wall.id })), setSelected(null))}>
                 <Trash2 />
               </Button>
             </div>
@@ -181,6 +215,111 @@ export function InteriorPhase({ project, onLayout, plans, onCalibrate, component
               units={units}
               min={25}
               onChange={(mm) => setLayout({ ...layout, walls: layout.walls.map((w) => (w.id === wall.id ? { ...w, thickness: mm } : w)) })}
+            />
+          </section>
+        )}
+
+        {door && doorWall && (
+          <section className="grid gap-2 rounded-lg border p-3">
+            <div className="flex items-center justify-between">
+              <Heading>Selected {door.kind}</Heading>
+              <Button variant="ghost" size="icon" className="size-7" aria-label={`Delete ${door.kind}`} onClick={() => (setLayout(removeFrom(layout, { type: 'door', id: door.id })), setSelected(null))}>
+                <Trash2 />
+              </Button>
+            </div>
+            <Segmented<Door['kind']>
+              label="Door or opening"
+              value={door.kind}
+              onChange={(kind) => updateDoor({ kind })}
+              options={[
+                { value: 'door', label: 'Door' },
+                { value: 'opening', label: 'Opening' },
+              ]}
+            />
+            <LengthInput label="Rough opening width" valueMm={door.width} units={units} min={100} onChange={(width) => updateDoor({ width: Math.min(width, wallLength(doorWall)) })} hint='A 32" door needs about 34".' />
+            <LengthInput label="Height" valueMm={door.height} units={units} min={100} onChange={(height) => updateDoor({ height })} />
+            <LengthInput
+              label="From the wall's start to the opening"
+              valueMm={door.at - door.width / 2}
+              units={units}
+              min={0}
+              onChange={(mm) => updateDoor({ at: Math.min(wallLength(doorWall) - door.width / 2, mm + door.width / 2) })}
+              hint="Measured along the wall, to the near edge of the opening."
+            />
+            {door.kind === 'door' && (
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button size="sm" variant="outline" onClick={() => updateDoor({ swing: door.swing === -1 ? 1 : -1 })}>
+                  <FlipVertical2 /> Swing side
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => updateDoor({ hinge: door.hinge === 'end' ? 'start' : 'end' })}>
+                  <FlipHorizontal2 /> Hinge side
+                </Button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {stair && fit && (
+          <section className="grid gap-2 rounded-lg border p-3">
+            <div className="flex items-center justify-between">
+              <Heading>Selected stair</Heading>
+              <Button variant="ghost" size="icon" className="size-7" aria-label="Delete stair" onClick={() => (setLayout(removeFrom(layout, { type: 'stair', id: stair.id })), setSelected(null))}>
+                <Trash2 />
+              </Button>
+            </div>
+            <div className="grid grid-cols-4 gap-1" role="group" aria-label="Which way is up">
+              {(
+                [
+                  ['up', <ArrowUp key="u" />, 'Up the plan'],
+                  ['down', <ArrowDown key="d" />, 'Down the plan'],
+                  ['left', <ArrowLeft key="l" />, 'To the left'],
+                  ['right', <ArrowRight key="r" />, 'To the right'],
+                ] as [StairHeading, React.ReactNode, string][]
+              ).map(([h, icon, label]) => (
+                <Button key={h} size="sm" variant={stair.heading === h ? 'default' : 'outline'} aria-label={`Climbs ${label.toLowerCase()}`} aria-pressed={stair.heading === h} onClick={() => updateStair({ heading: h })}>
+                  {icon}
+                </Button>
+              ))}
+            </div>
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+              <dt className="text-muted-foreground">Total rise</dt>
+              <dd className="tabular-nums">{formatLength(fit.rise, units)}</dd>
+              <dt className="text-muted-foreground">Steps (risers)</dt>
+              <dd className="tabular-nums">{fit.risers}</dd>
+              <dt className="text-muted-foreground">Each step</dt>
+              <dd className="tabular-nums">{formatLength(fit.riserHeight, units)}</dd>
+              <dt className="text-muted-foreground">Tread depth</dt>
+              <dd className="tabular-nums">{formatLength(fit.tread, units)}</dd>
+              <dt className="text-muted-foreground">Width</dt>
+              <dd className="tabular-nums">{formatLength(fit.width, units)}</dd>
+            </dl>
+            <p className={cn('text-xs leading-snug', fit.ok ? 'text-success' : 'text-destructive')}>
+              {fit.ok ? 'Meets the code for a house stair (rise 7 7/8" max, tread 8 1/4" min).' : fit.problems.join(' ')}
+            </p>
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">Number of risers (from the plan)</span>
+              <Input
+                type="number"
+                min={2}
+                className="h-8"
+                value={stair.risers ?? ''}
+                placeholder={`${fit.risers} (worked out)`}
+                onChange={(e) => updateStair({ risers: e.target.value ? Math.max(2, Math.round(Number(e.target.value))) : undefined })}
+              />
+            </label>
+            <LengthInput
+              label="Length (along the climb)"
+              valueMm={fit.length}
+              units={units}
+              min={300}
+              onChange={(mm) => updateStair(stair.heading === 'up' || stair.heading === 'down' ? { sy: mm } : { sx: mm })}
+            />
+            <LengthInput
+              label="Width"
+              valueMm={fit.width}
+              units={units}
+              min={300}
+              onChange={(mm) => updateStair(stair.heading === 'up' || stair.heading === 'down' ? { sx: mm } : { sy: mm })}
             />
           </section>
         )}
@@ -235,6 +374,27 @@ export function InteriorPhase({ project, onLayout, plans, onCalibrate, component
           )}
         </section>
 
+        {roomMeasures.length > 0 && (
+          <section className="grid gap-2">
+            <Heading>Check room sizes</Heading>
+            <ChecksPanel
+              measures={roomMeasures}
+              checks={project.checks ?? {}}
+              plans={plans}
+              units={units}
+              activeId={activeCheck}
+              comparePlanId={calibrated?.id ?? null}
+              onActivate={(id) => {
+                setActiveCheck(id);
+                const m = roomMeasures.find((x) => x.id === id);
+                if (m?.roomId) setSelected({ type: 'room', id: m.roomId });
+              }}
+              onCheck={onCheck}
+              groups={['rooms']}
+            />
+          </section>
+        )}
+
         <section className="grid gap-2">
           <Heading>Plan underneath</Heading>
           {calibrated ? (
@@ -273,6 +433,8 @@ export function InteriorPhase({ project, onLayout, plans, onCalibrate, component
           onChange={setLayout}
           tool={tool}
           wallThickness={thickness}
+          doorKind={doorKind}
+          stairSteps={(st) => stairFit(project, storey, st).risers}
           selected={selected}
           onSelect={setSelected}
           onRoomCreated={(id) => setNameFocus(id)}

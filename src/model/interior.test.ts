@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { defaultFoundation } from './foundation';
 import {
+  doorAt,
+  stairFit,
+  stairTreads,
+  wallSolids,
   interiorComponents,
   roomArea,
   roomSize,
@@ -13,6 +17,7 @@ import {
   type InteriorWall,
 } from './interior';
 import { reducer } from './project';
+import { measures } from './checks';
 import { emptyProject, type Project } from './types';
 
 const FT = 304.8;
@@ -102,5 +107,69 @@ describe('snapping', () => {
     const s = snap({ x: 1000, y: 3000 }, targets, 100, null);
     expect(s.kind).toBe('grid');
     expect(s.p.x / IN).toBeCloseTo(Math.round(1000 / IN));
+  });
+});
+
+describe('doors', () => {
+  const door = { id: 'd', wallId: 'w', kind: 'door' as const, at: 1000, width: 34 * IN, height: 82.5 * IN };
+
+  it('cut their width out of the wall', () => {
+    const solids = wallSolids(wall, [door]);
+    expect(solids).toHaveLength(2);
+    expect(solids[0][1]).toBeCloseTo(1000 - 17 * IN);
+    expect(solids[1][0]).toBeCloseTo(1000 + 17 * IN);
+    expect(solids[1][1]).toBe(3000);
+  });
+
+  it('are placed where clicked, to the inch, inside the wall', () => {
+    expect(doorAt(wall, { x: 1010, y: 40 }, 34 * IN) / IN).toBe(Math.round(1010 / IN));
+    expect(doorAt(wall, { x: 5, y: 0 }, 34 * IN)).toBe(17 * IN);
+  });
+
+  it('leave a header above them in 3D', () => {
+    const p = reducer(house(), { type: 'set-interior', storey: 'ground-floor', layout: { walls: [wall], rooms: [], doors: [door] } });
+    const parts = interiorComponents(p).filter((c) => c.kind === 'interior-wall');
+    expect(parts).toHaveLength(3);
+    const head = parts.find((c) => c.id.endsWith(':head'))!;
+    expect(head.bottom).toBeCloseTo(2 * FT + 82.5 * IN);
+  });
+});
+
+describe('stairs', () => {
+  // Basement floor to ground floor: 2' - (1' - 8' + 4") = 8' 8" of rise.
+  const st = { id: 's', x: 0, y: 0, sx: 900, sy: 3300, heading: 'up' as const };
+
+  it('work out risers from the rise and check the code', () => {
+    const fit = stairFit(house(), 'basement', st);
+    expect(fit.rise).toBeCloseTo(8 * FT + 8 * IN);
+    expect(fit.risers).toBe(14);
+    expect(fit.riserHeight).toBeLessThanOrEqual(200);
+    expect(fit.tread).toBeCloseTo(3300 / 13);
+    expect(fit.ok).toBe(true);
+  });
+
+  it('flag a stair that is too steep or too narrow', () => {
+    const fit = stairFit(house(), 'basement', { ...st, sx: 700, sy: 2000 });
+    expect(fit.ok).toBe(false);
+    expect(fit.problems.join(' ')).toMatch(/shallow/);
+    expect(fit.problems.join(' ')).toMatch(/Narrower/);
+  });
+
+  it('step up the way it climbs', () => {
+    const down = stairTreads({ ...st, heading: 'down' }, 3);
+    expect(down[0][2].y).toBeCloseTo(3300);
+    expect(down[2][0].y).toBeCloseTo(0);
+  });
+});
+
+describe('room sizes to check', () => {
+  it('are listed for each room', () => {
+    const room = { id: 'r', name: 'Kitchen', outline: [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 3000 }, { x: 0, y: 3000 }] };
+    const p = reducer(house(), { type: 'set-interior', storey: 'ground-floor', layout: { walls: [], rooms: [room] } });
+    const rooms = measures(p).filter((m) => m.group === 'rooms');
+    expect(rooms.map((m) => [m.label, m.value])).toEqual([
+      ['Kitchen · width', 4000],
+      ['Kitchen · depth', 3000],
+    ]);
   });
 });

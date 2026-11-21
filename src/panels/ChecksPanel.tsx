@@ -19,15 +19,18 @@ interface Props {
   comparePlanId: string | null;
   onActivate: (id: string | null) => void;
   onCheck: (id: string, check: Check | null) => void;
+  /** Which groups to list (all but room sizes by default). */
+  groups?: MeasureGroup[];
 }
 
 const GROUPS: { id: MeasureGroup; title: string; empty: string }[] = [
   { id: 'footprint', title: 'Footprint', empty: 'Add a foundation outline to check its sides.' },
   { id: 'levels', title: 'Levels', empty: 'Set the levels to check them.' },
+  { id: 'rooms', title: 'Room sizes', empty: 'Trace rooms to check their sizes.' },
 ];
 
 export function value(m: Measure, units: UnitSystem) {
-  if (m.group === 'footprint') return formatLength(m.value, units);
+  if (m.group !== 'levels') return formatLength(m.value, units);
   return `${m.value > 0 ? '+' : m.value < 0 ? '−' : ''}${formatLength(Math.abs(m.value), units)}`;
 }
 
@@ -54,7 +57,7 @@ export function ChecksPanel(props: Props) {
       <p className="text-xs leading-snug text-muted-foreground">
         {total.total === 0
           ? 'Nothing to check yet.'
-          : `${total.matches + total.differs} of ${total.total} checked${total.differs ? ` · ${total.differs} differ${total.differs === 1 ? 's' : ''}` : ''}. Click a measurement, here or on the model, to mark it.`}
+          : `${total.matches + total.differs} of ${total.total} checked${total.differs ? ` · ${total.differs} differ${total.differs === 1 ? 's' : ''}` : ''}.${props.groups?.includes('rooms') ? ' Click a size to mark it.' : ' Click a measurement, here or on the model, to mark it.'}`}
       </p>
       {total.total > 0 && (
         <div className="flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
@@ -62,7 +65,7 @@ export function ChecksPanel(props: Props) {
           <div className="bg-destructive" style={{ width: `${(100 * total.differs) / total.total}%` }} />
         </div>
       )}
-      {GROUPS.map((g) => {
+      {GROUPS.filter((g) => (props.groups ?? ['footprint', 'levels']).includes(g.id)).map((g) => {
         const list = measures.filter((m) => m.group === g.id);
         const s = summarize(list, checks);
         return (
