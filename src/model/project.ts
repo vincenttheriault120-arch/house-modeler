@@ -1,6 +1,7 @@
 import type { Component } from './component';
 import { buildFloor, defaultFloor, type FloorParams } from './floor';
 import { buildFoundation, defaultFoundation, type FoundationParams } from './foundation';
+import type { Check } from './checks';
 import type { Level } from './levels';
 import { emptyProject, type FloorStep, type FoundationStep, type Project, type Step } from './types';
 
@@ -21,6 +22,7 @@ export type Action =
   | { type: 'set-levels'; levels: Level[] }
   | { type: 'rename-project'; name: string }
   | { type: 'set-phase'; phase: NonNullable<Project['phase']> }
+  | { type: 'set-check'; id: string; check: Check | null }
   | { type: 'replace'; project: Project };
 
 /**
@@ -123,6 +125,10 @@ function baseReducer(state: Project, action: Action): Project {
       return { ...state, name: action.name };
     case 'set-phase':
       return { ...state, phase: action.phase };
+    case 'set-check': {
+      const { [action.id]: _old, ...rest } = state.checks ?? {};
+      return { ...state, checks: action.check ? { ...rest, [action.id]: action.check } : rest };
+    }
     case 'replace':
       return action.project;
   }
