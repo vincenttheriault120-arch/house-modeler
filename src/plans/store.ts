@@ -1,3 +1,5 @@
+import type { Calibration } from '../model/calibration';
+
 /**
  * Plan PDFs, stored in this browser only (IndexedDB). They are never part of
  * the project file or the repository.
@@ -38,6 +40,8 @@ export interface PlanMeta {
   contains?: PlanKind[];
   /** Set when Claude read the PDF to label it. */
   labeledBy?: 'claude';
+  /** The sheet's scale and how it lines up with the model, once set. */
+  calibration?: Calibration;
 }
 
 /** The drawings worth having before building, in the order they're used. */
