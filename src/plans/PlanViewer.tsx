@@ -18,17 +18,20 @@ export function PlanViewer({
   units,
   onClose,
   onCalibrate,
+  calibrate = false,
 }: {
   plan: PlanMeta;
   units: UnitSystem;
   onClose: () => void;
   onCalibrate: (meta: PlanMeta) => void;
+  /** Open straight on Set scale (step 1, click the reference corner). */
+  calibrate?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [doc, setDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(plan.calibration?.page ?? 1);
   const [pageSize, setPageSize] = useState<{ w: number; h: number } | null>(null);
-  const [step, setStep] = useState<Step | null>(null);
+  const [step, setStep] = useState<Step | null>(calibrate && viewForKind(plan.kind) ? 'a' : null);
   const [a, setA] = useState<PagePoint | null>(null);
   const [b, setB] = useState<PagePoint | null>(null);
   const [length, setLength] = useState('');
@@ -36,6 +39,8 @@ export function PlanViewer({
   const view = viewForKind(plan.kind);
   const cal = plan.calibration;
   const [zoom, setZoom] = useState(1);
+  const scroller = useRef<HTMLDivElement>(null);
+  const fitted = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,6 +64,17 @@ export function PlanViewer({
     doc.getPage(page).then((p) => {
       const unit = p.getViewport({ scale: 1 });
       setPageSize({ w: unit.width, h: unit.height });
+      // The first time, show the whole sheet so the house is in view.
+      const box = scroller.current;
+      if (!fitted.current && box) {
+        fitted.current = true;
+        const fit = Math.min((box.clientWidth - 32) / (unit.width * 1.6), (box.clientHeight - 32) / (unit.height * 1.6));
+        const z = Math.max(0.2, Math.min(1, fit));
+        if (Math.abs(z - zoom) > 0.01) {
+          setZoom(z);
+          return;
+        }
+      }
       const viewport = p.getViewport({ scale: 1.6 * zoom * (window.devicePixelRatio || 1) });
       const c = canvas.current!;
       c.width = viewport.width;
@@ -131,7 +147,7 @@ export function PlanViewer({
             </Button>
           </>
         )}
-        <Button variant="ghost" size="icon" className="size-8" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.5, z / 1.25))}>
+        <Button variant="ghost" size="icon" className="size-8" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.2, z / 1.25))}>
           <Minus />
         </Button>
         <span className="w-10 text-center text-xs tabular-nums text-muted-foreground">{Math.round(zoom * 100)}%</span>
@@ -142,10 +158,18 @@ export function PlanViewer({
           <X />
         </Button>
       </div>
+      {!step && view && !cal && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-accent px-3 py-2 text-sm">
+          <span>This plan has no scale yet. Set it to lay the plan over the model and trace over it.</span>
+          <Button size="sm" onClick={startCalibration}>
+            <Ruler /> Set scale
+          </Button>
+        </div>
+      )}
       {step && view && (
         <div className="flex flex-wrap items-center gap-2 border-b bg-accent px-3 py-2 text-sm" role="status">
           <span className="font-medium">
-            {step === 'a' && `1. ${anchorHint(view)}`}
+            {step === 'a' && `1. ${anchorHint(view)} Zoom in with + to place it precisely.`}
             {step === 'b' && '2. Click the other end of a dimension you trust, measured from that point (a width, or a height on an elevation).'}
             {step === 'length' && '3. Type that dimension, as written on the plan.'}
           </span>
@@ -180,7 +204,7 @@ export function PlanViewer({
           </Button>
         </div>
       )}
-      <div className="flex-1 overflow-auto bg-muted/50 p-4">
+      <div ref={scroller} className="flex-1 overflow-auto bg-muted/50 p-4">
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : (
