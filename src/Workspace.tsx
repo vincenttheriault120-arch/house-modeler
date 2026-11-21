@@ -49,6 +49,7 @@ import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import { setActivePlanStore, type PlanMeta, type PlanStore } from './plans/store';
 import { usePlans } from './plans/usePlans';
 import { comparablePlans, planLabel, useCompare } from './plans/useCompare';
+import { viewForKind } from './model/calibration';
 import { measureState, measures, summarize } from './model/checks';
 import { ChecksPanel } from './panels/ChecksPanel';
 import { InteriorPhase } from './interior/InteriorPhase';
@@ -85,6 +86,8 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   const [viewKey, setViewKey] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
   const [viewing, setViewing] = useState<PlanMeta | null>(null);
+  /** Open the plan viewer straight on Set scale. */
+  const [scaleOnOpen, setScaleOnOpen] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestingLevels, setSuggestingLevels] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -98,6 +101,8 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   const plans = usePlans(planStore);
   const compare = useCompare(project, plans.plans);
   const comparable = comparablePlans(plans.plans);
+  /** Floor plans and elevations that could be compared once their scale is set. */
+  const needScale = plans.plans.filter((p) => !p.calibration && viewForKind(p.kind));
   const addedNewPlans = useRef(false);
   useEffect(() => {
     if (addedNewPlans.current || !newPlans?.length) return;
@@ -231,6 +236,20 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
         action: { label: 'Add plan PDFs', run: () => planInput.current?.click() },
       },
       {
+        id: 'scale',
+        title: "Set your plans' scale",
+        detail: 'On each floor plan and elevation, click a corner and the end of a dimension you trust. Then the plan can be laid over the model.',
+        action: needScale[0]
+          ? {
+              label: `Set the scale of ${planLabel(needScale[0]).toLowerCase()}`,
+              run: () => {
+                setScaleOnOpen(true);
+                setViewing(needScale[0]);
+              },
+            }
+          : undefined,
+      },
+      {
         id: 'levels',
         title: 'Set the levels',
         detail: 'Grade, top of foundation, each floor and the roof ridge, read from the elevations. Every step starts from these.',
@@ -272,6 +291,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
     ],
     {
       plans: plans.plans.length > 0,
+      scale: plans.plans.length > 0 && needScale.length === 0,
       levels: project.levels.length > 0,
       basement: foundations.some((s) => s.params.type === 'basement'),
       slab: foundations.some((s) => s.params.type === 'slab-on-grade'),
@@ -409,7 +429,10 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
             }}
             onUpdate={plans.update}
             onRemove={plans.remove}
-            onView={setViewing}
+            onView={(p) => {
+              setScaleOnOpen(false);
+              setViewing(p);
+            }}
           />
         </section>
 
@@ -581,15 +604,38 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
             aria-label="Compare with plan"
             className="h-8 rounded-md border bg-background px-2 text-sm shadow-xs"
             value={compare.planId ?? ''}
-            onChange={(e) => compare.setPlanId(e.target.value || null)}
-            title={comparable.length === 0 ? 'Open a plan and use Set scale to compare it with the model.' : undefined}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v.startsWith('scale:')) {
+                const p = plans.plans.find((x) => x.id === v.slice(6));
+                if (p) {
+                  setScaleOnOpen(true);
+                  setViewing(p);
+                }
+              } else if (v === 'add') planInput.current?.click();
+              else compare.setPlanId(v || null);
+            }}
           >
-            <option value="">{comparable.length === 0 ? 'Compare with plan (set a scale first)' : 'Compare with plan…'}</option>
-            {comparable.map((p) => (
-              <option key={p.id} value={p.id}>
-                {planLabel(p)}
-              </option>
-            ))}
+            <option value="">Compare with plan…</option>
+            {comparable.length > 0 && (
+              <optgroup label="Lay over the model">
+                {comparable.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {planLabel(p)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {needScale.length > 0 && (
+              <optgroup label="Set the scale first (opens the plan)">
+                {needScale.map((p) => (
+                  <option key={p.id} value={`scale:${p.id}`}>
+                    {planLabel(p)}: set scale…
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {plans.plans.length === 0 && <option value="add">Add plan PDFs…</option>}
           </select>
           {compare.planId && (
             <>
@@ -624,12 +670,19 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
         )}
         {viewing && (
           <PlanViewer
+            key={viewing.id}
             plan={viewing}
             units={units}
+            calibrate={scaleOnOpen}
             onClose={() => setViewing(null)}
             onCalibrate={(meta) => {
               plans.calibrate(meta);
-              setViewing(meta);
+              if (scaleOnOpen) {
+                // Came from the Compare menu: go straight to comparing.
+                compare.setPlanId(meta.id);
+                setScaleOnOpen(false);
+                setViewing(null);
+              } else setViewing(meta);
             }}
           />
         )}
