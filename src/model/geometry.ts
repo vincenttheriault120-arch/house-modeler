@@ -199,3 +199,14 @@ export function rect(x0: number, y0: number, x1: number, y1: number): Vec2[] {
     { x: x0, y: y1 },
   ];
 }
+
+/** Whether a point is strictly inside a polygon (even-odd rule). */
+export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}

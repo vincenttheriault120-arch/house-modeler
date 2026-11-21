@@ -10,6 +10,7 @@ import {
   Moon,
   Plus,
   RotateCcw,
+  Ruler,
   Save,
   Sparkles,
   Sun,
@@ -51,6 +52,7 @@ import { LevelsSection } from './panels/LevelsSection';
 import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
 import { defaultFloor } from './model/floor';
 import { sortLevels } from './model/levels';
+import { levelMarks, lengthDimensions } from './model/dimensions';
 import { PhaseBar, PhasePlaceholder } from './phases';
 
 function PanelHeading({ children }: { children: React.ReactNode }) {
@@ -114,6 +116,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   }, [project, initial, onSave]);
 
   const allComponents = useMemo(() => buildComponents(project), [project]);
+  const dimensions = useMemo(() => ({ lengths: lengthDimensions(project), levels: levelMarks(project) }), [project]);
   const visibleSteps = new Set(project.steps.filter((s) => s.visible).map((s) => s.id));
   const components = allComponents.filter(
     (c) => visibleSteps.has(c.stepId) && (settings.showSubfloor || c.kind !== 'subfloor'),
@@ -485,7 +488,30 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           gridSpacing={settings.gridSpacing}
           selectedId={selectedComponentId}
           onSelect={selectComponent}
+          clay={settings.clay}
+          dimensions={settings.showDimensions ? dimensions : undefined}
+          units={units}
         />
+        <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
+          <Button
+            size="sm"
+            variant={settings.clay ? 'default' : 'outline'}
+            className={cn(!settings.clay && 'bg-background')}
+            aria-pressed={settings.clay}
+            onClick={() => setSettings({ ...settings, clay: !settings.clay })}
+          >
+            Clay
+          </Button>
+          <Button
+            size="sm"
+            variant={settings.showDimensions ? 'default' : 'outline'}
+            className={cn(!settings.showDimensions && 'bg-background')}
+            aria-pressed={settings.showDimensions}
+            onClick={() => setSettings({ ...settings, showDimensions: !settings.showDimensions })}
+          >
+            <Ruler /> Dimensions
+          </Button>
+        </div>
         {chatOpen && (
           <ChatPanel
             project={project}
