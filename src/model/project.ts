@@ -20,6 +20,7 @@ export type Action =
   | { type: 'move-step'; id: string; by: -1 | 1 }
   | { type: 'set-levels'; levels: Level[] }
   | { type: 'rename-project'; name: string }
+  | { type: 'set-phase'; phase: NonNullable<Project['phase']> }
   | { type: 'replace'; project: Project };
 
 /**
@@ -120,6 +121,8 @@ function baseReducer(state: Project, action: Action): Project {
     }
     case 'rename-project':
       return { ...state, name: action.name };
+    case 'set-phase':
+      return { ...state, phase: action.phase };
     case 'replace':
       return action.project;
   }
@@ -159,24 +162,4 @@ export function parseProject(json: string): Project {
       return step;
     }),
   };
-}
-
-const AUTOSAVE_KEY = 'house-modeler:project';
-
-export function loadAutosave(): Project {
-  try {
-    const raw = localStorage.getItem(AUTOSAVE_KEY);
-    if (raw) return parseProject(raw);
-  } catch {
-    // Missing or unreadable: start fresh.
-  }
-  return emptyProject();
-}
-
-export function saveAutosave(project: Project) {
-  try {
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(project));
-  } catch {
-    // Storage blocked: the person can still use Save to file.
-  }
 }

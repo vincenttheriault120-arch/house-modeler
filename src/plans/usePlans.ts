@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadApiKey } from '../chat/apiKey';
-import { addPlan, deletePlan, listPlans, updatePlan, type PlanMeta } from './store';
+import type { PlanMeta, PlanStore } from './store';
 import { labelPlan } from './suggest';
 
-export function usePlans() {
+/** The plans of the open project, wherever that project is kept. */
+export function usePlans(store: PlanStore) {
   const [plans, setPlans] = useState<PlanMeta[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [labeling, setLabeling] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(() => {
-    listPlans()
-      .then(setPlans)
-      .catch(() => setError("Plans can't be stored in this browser (private window or blocked storage)."));
-  }, []);
+    store
+      .list()
+      .then((p) => {
+        setPlans(p);
+        setError(null);
+      })
+      .catch(() => setError("Couldn't read this project's plans (blocked storage, or the folder was moved)."));
+  }, [store]);
 
   useEffect(refresh, [refresh]);
 
@@ -24,7 +29,7 @@ export function usePlans() {
       setLabeling((s) => new Set(s).add(meta.id));
       try {
         const l = await labelPlan(key, meta);
-        await updatePlan({ ...meta, kind: l.kind, contains: l.also_contains.filter((k) => k !== l.kind), labeledBy: 'claude' });
+        await store.update({ ...meta, kind: l.kind, contains: l.also_contains.filter((k) => k !== l.kind), labeledBy: 'claude' });
       } catch {
         // Keep the guess from the file name; the person can pick the type.
       } finally {
@@ -36,7 +41,7 @@ export function usePlans() {
         refresh();
       }
     },
-    [refresh],
+    [refresh, store],
   );
 
   return {
@@ -47,18 +52,18 @@ export function usePlans() {
       const added: PlanMeta[] = [];
       for (const f of Array.from(files)) {
         if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) continue;
-        added.push(await addPlan(f));
+        added.push(await store.add(f));
       }
       refresh();
       await Promise.all(added.map(label));
     },
     async update(meta: PlanMeta) {
       // A type picked by hand replaces Claude's label.
-      await updatePlan({ ...meta, labeledBy: undefined });
+      await store.update({ ...meta, labeledBy: undefined });
       refresh();
     },
     async remove(id: string) {
-      await deletePlan(id);
+      await store.remove(id);
       refresh();
     },
   };

@@ -33,6 +33,13 @@ export type StepKind = Step['kind'];
 export interface Project {
   version: 1;
   name: string;
+  address?: string;
+  /** How the project began: from 2D plans or from a blank footprint. */
+  start?: 'plans' | 'scratch';
+  /** The phase the person is working in (1 = exterior shell). */
+  phase?: 1 | 2 | 3 | 4 | 5;
+  /** Storeys above grade, as given when the project was created. */
+  storeys?: number;
   /** Key heights from the elevations; steps can follow them. */
   levels: Level[];
   steps: Step[];
