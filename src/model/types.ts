@@ -51,6 +51,10 @@ export interface ViewSettings {
   gridSpacing: number;
   /** Hide subfloors so the joists underneath can be seen. */
   showSubfloor: boolean;
+  /** Clay mode: matte grey model with crisp outlines, for checking shape and sizes. */
+  clay: boolean;
+  /** Draw lengths and levels on the model. */
+  showDimensions: boolean;
 }
 
 export function emptyProject(): Project {
