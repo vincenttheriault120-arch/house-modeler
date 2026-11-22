@@ -4,6 +4,7 @@ import type { StoreyId, StoreyLayout } from './interior';
 import type { FloorParams } from './floor';
 import type { FoundationParams } from './foundation';
 import type { Level } from './levels';
+import type { ExteriorDraft } from '../draft/types';
 
 /**
  * A house is an ordered list of build steps. Each step owns its own editable
@@ -49,6 +50,8 @@ export interface Project {
   checks?: Record<string, Check>;
   /** Phase 2: interior walls and rooms, per storey. */
   interior?: Partial<Record<StoreyId, StoreyLayout>>;
+  /** Phase 1: the whole exterior, drafted from the plans and checked view by view. */
+  exterior?: ExteriorDraft;
 }
 
 export interface ViewSettings {
