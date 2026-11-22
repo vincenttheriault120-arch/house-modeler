@@ -13,13 +13,14 @@ interface Props {
   ariaLabel?: string;
   hint?: string;
   className?: string;
+  inputClassName?: string;
 }
 
 /**
  * A text field for a length. Shows the value in the current units and accepts
  * either system when typing (e.g. 8' 6", 2600 mm, 2.6 m).
  */
-export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel, hint, className }: Props) {
+export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel, hint, className, inputClassName }: Props) {
   const id = useId();
   const [text, setText] = useState(formatLength(valueMm, units));
   const [error, setError] = useState(false);
@@ -66,7 +67,7 @@ export function LengthInput({ label, valueMm, units, onChange, min, ariaLabel, h
           }
         }}
         aria-invalid={error}
-        className="h-8 tabular-nums"
+        className={cn('h-8 tabular-nums', inputClassName)}
       />
       {error ? (
         <span className="text-xs text-destructive">

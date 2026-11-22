@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils';
 export type PhaseId = 1 | 2 | 3 | 4 | 5;
 
 export const PHASES: { id: PhaseId; name: string; blurb: string }[] = [
-  { id: 1, name: 'Exterior shell', blurb: 'The whole outside of the house: footprint, levels, storeys, roofs and openings, checked against the plans.' },
+  { id: 1, name: 'Exterior', blurb: 'The whole outside of the house drafted at once from the plans, in white clay, then checked one drawing at a time.' },
   { id: 2, name: 'Interior layout', blurb: 'Interior walls, rooms, doors and stairs, one level at a time, over each floor plan.' },
-  { id: 3, name: 'Structure', blurb: 'Footings, slabs, floor systems and framing.' },
+  { id: 3, name: 'Structure', blurb: 'Foundations, slabs, floor systems and levels, step by step.' },
   { id: 4, name: 'Finishes', blurb: 'Materials for each surface, lighting fixtures and a sun study.' },
   { id: 5, name: 'Share', blurb: 'Saved views, the component list and the Blender export.' },
 ];
@@ -48,7 +48,7 @@ export function PhasePlaceholder({ phase, onBack }: { phase: PhaseId; onBack: ()
         </h2>
         <p className="text-muted-foreground">{p.blurb}</p>
         <p className="text-sm text-muted-foreground">
-          This phase is coming in a later update. Your work so far lives in Phase 1.
+          This phase is coming in a later update.
         </p>
         <Button onClick={onBack}>
           <Check /> Back to Phase 1

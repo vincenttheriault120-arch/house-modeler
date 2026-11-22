@@ -151,7 +151,7 @@ export function NewProjectWizard({ folderReady, folderName, initialWhere, onCanc
                   onClick={() => setStart('plans')}
                   icon={<FileText className="size-7 text-primary" />}
                   title="From my plans"
-                  text="Add your PDF plans. Claude labels each sheet, and the plans guide every measurement you enter."
+                  text="Add your PDF plans. Claude drafts the whole exterior from them in one go; then you check it one drawing at a time."
                 />
                 <Choice
                   on={start === 'scratch'}
@@ -222,7 +222,7 @@ export function NewProjectWizard({ folderReady, folderName, initialWhere, onCanc
                 </ul>
               )}
               <div className="grid gap-1 rounded-lg bg-muted/60 p-3">
-                <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">What Phase 1 uses</span>
+                <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">What the draft uses</span>
                 <ul className="grid gap-0.5 sm:grid-cols-2">
                   {EXPECTED_PLANS.map((e) => (
                     <li key={e.kind} className="flex items-center gap-2 text-sm">
@@ -236,8 +236,8 @@ export function NewProjectWizard({ folderReady, folderName, initialWhere, onCanc
                   ))}
                 </ul>
                 <p className="text-xs text-muted-foreground">
-                  Guessed from the file names. With your API key saved, Claude reads each sheet and labels it when the project opens.
-                  Missing sheets can be added later.
+                  Guessed from the file names. When the project opens, Claude reads every sheet and drafts the whole exterior
+                  (you'll be asked for your API key if it isn't saved yet). Missing sheets can be added later.
                 </p>
               </div>
             </>
@@ -298,7 +298,7 @@ export function NewProjectWizard({ folderReady, folderName, initialWhere, onCanc
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">
-                The footprint becomes your first foundation. Notches start at half the width and depth; adjust every side in Phase 1.
+                The footprint becomes your first foundation, and the starting point of the exterior draft. Adjust every side later.
               </p>
             </>
           )}

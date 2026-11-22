@@ -49,6 +49,7 @@ export const EXPECTED_PLANS: { kind: PlanKind; why: string }[] = [
   { kind: 'basement', why: 'Foundation outline and dimensions' },
   { kind: 'ground-floor', why: 'Ground floor walls and openings' },
   { kind: 'first-floor', why: 'Upper floor, incl. the cantilever' },
+  { kind: 'roof', why: 'Roof shapes and overhangs' },
   { kind: 'elevation-front', why: 'Heights: grade, floors, roof' },
   { kind: 'elevation-back', why: 'Heights, back of the house' },
   { kind: 'elevation-left', why: 'Heights, side' },

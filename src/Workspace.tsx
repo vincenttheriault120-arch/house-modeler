@@ -43,17 +43,12 @@ import { Viewport } from './Viewport';
 import { ChatPanel } from './chat/ChatPanel';
 import { loadApiKey } from './chat/apiKey';
 import { applyFoundationType, defaultFoundation } from './model/foundation';
-import { GuidedSteps, withNext } from './panels/GuidedSteps';
 import { PlansSection } from './plans/PlansSection';
 import { PlanViewer } from './plans/PlanViewer';
 import { SuggestDialog } from './plans/SuggestDialog';
 import { FloorSuggestDialog } from './plans/FloorSuggestDialog';
 import { setActivePlanStore, type PlanMeta, type PlanStore } from './plans/store';
 import { usePlans } from './plans/usePlans';
-import { comparablePlans, planLabel, useCompare } from './plans/useCompare';
-import { SCREEN_AXES, viewForKind } from './model/calibration';
-import { measureState, measures, summarize } from './model/checks';
-import { ChecksPanel } from './panels/ChecksPanel';
 import { InteriorPhase } from './interior/InteriorPhase';
 import { LevelsSection } from './panels/LevelsSection';
 import { LevelsSuggestDialog } from './plans/LevelsSuggestDialog';
@@ -61,6 +56,8 @@ import { defaultFloor } from './model/floor';
 import { sortLevels } from './model/levels';
 import { levelMarks, lengthDimensions } from './model/dimensions';
 import { PhaseBar, PhasePlaceholder } from './phases';
+import { ExteriorPhase } from './draft/ExteriorPhase';
+import { exportDraftGlb } from './draft/export';
 
 function PanelHeading({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{children}</h2>;
@@ -88,8 +85,6 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   const [viewKey, setViewKey] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
   const [viewing, setViewing] = useState<PlanMeta | null>(null);
-  /** Open the plan viewer straight on Set scale. */
-  const [scaleOnOpen, setScaleOnOpen] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestingLevels, setSuggestingLevels] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -101,33 +96,6 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
     return () => setActivePlanStore(null);
   }, [planStore]);
   const plans = usePlans(planStore);
-  const compare = useCompare(project, plans.plans, plans.calibrate);
-
-  // Moving the plan: arrow keys nudge it 1" (Shift: 1'), along the screen.
-  useEffect(() => {
-    if (compare.mode !== 'move' || !compare.view) return;
-    const axes = SCREEN_AXES[compare.view];
-    function onKey(e: KeyboardEvent) {
-      if ((e.target as HTMLElement)?.closest('input, textarea, select')) return;
-      const dir = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
-      if (!dir) return;
-      e.preventDefault();
-      const step = e.shiftKey ? 304.8 : 25.4;
-      const [r, u] = dir;
-      compare.shiftBy({
-        x: (axes.right.x * r + axes.up.x * u) * step,
-        y: (axes.right.y * r + axes.up.y * u) * step,
-        z: (axes.right.z * r + axes.up.z * u) * step,
-      });
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
-  const comparable = comparablePlans(plans.plans);
-  /** Floor plans and elevations that could be compared once their scale is set. */
-  const needScale = plans.plans.filter((p) => !p.calibration && viewForKind(p.kind));
-  /** Plans whose label (section, other…) can't be laid over the model. */
-  const cantCompare = plans.plans.filter((p) => !viewForKind(p.kind));
   const addedNewPlans = useRef(false);
   useEffect(() => {
     if (addedNewPlans.current || !newPlans?.length) return;
@@ -153,21 +121,6 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
 
   const allComponents = useMemo(() => buildComponents(project), [project]);
   const dimensions = useMemo(() => ({ lengths: lengthDimensions(project), levels: levelMarks(project) }), [project]);
-  // Room sizes are checked in Phase 2, with the rooms.
-  const measureList = useMemo(() => measures(project).filter((m) => m.group !== 'rooms'), [project]);
-  const checks = useMemo(() => project.checks ?? {}, [project.checks]);
-  const checkStates = useMemo(() => Object.fromEntries(measureList.map((m) => [m.id, measureState(m, checks[m.id])])), [measureList, checks]);
-  const checkSummary = summarize(measureList, checks);
-  const [activeCheck, setActiveCheck] = useState<string | null>(null);
-  const checksRef = useRef<HTMLElement>(null);
-
-  /** Pick a measurement to check: show the dimensions and bring the panel into view. */
-  function pickCheck(id: string | null) {
-    setActiveCheck(id);
-    if (!id) return;
-    if (!settings.showDimensions) setSettings({ ...settings, showDimensions: true });
-    requestAnimationFrame(() => checksRef.current?.querySelector('[aria-expanded="true"]')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-  }
   const visibleSteps = new Set(project.steps.filter((s) => s.visible).map((s) => s.id));
   const components = allComponents.filter(
     (c) => (visibleSteps.has(c.stepId) || c.stepId.startsWith('interior:')) && (settings.showSubfloor || c.kind !== 'subfloor'),
@@ -248,85 +201,9 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
 
   const foundations = project.steps.flatMap((s) => (s.kind === 'foundation' ? [s] : []));
   const basement = foundations.find((s) => s.params.type === 'basement');
-  const hasFloorOverBasement = !!basement && project.steps.some((s) => s.kind === 'floor' && s.params.supportId === basement.id);
   /** Foundation to put a new floor on: the selected one, else the basement, else the first. */
   const floorTarget =
     (selectedStep?.kind === 'foundation' ? selectedStep : undefined) ?? basement ?? foundations[0];
-  const guides = withNext(
-    [
-      {
-        id: 'plans',
-        title: 'Import your plans',
-        detail: 'Floor plans, the four elevations and a section. Claude labels each one.',
-        action: { label: 'Add plan PDFs', run: () => planInput.current?.click() },
-      },
-      {
-        id: 'scale',
-        title: "Set your plans' scale",
-        detail: 'On each floor plan and elevation, click a corner and the end of a dimension you trust. Then the plan can be laid over the model.',
-        action: needScale[0]
-          ? {
-              label: `Set the scale of ${planLabel(needScale[0]).toLowerCase()}`,
-              run: () => {
-                setScaleOnOpen(true);
-                setViewing(needScale[0]);
-              },
-            }
-          : undefined,
-      },
-      {
-        id: 'levels',
-        title: 'Set the levels',
-        detail: 'Grade, top of foundation, each floor and the roof ridge, read from the elevations. Every step starts from these.',
-        action: { label: 'Suggest from elevations', run: startLevelsSuggest },
-      },
-      {
-        id: 'basement',
-        title: 'Basement foundation',
-        detail: 'Outline, walls, footing and slab. Claude reads your plans and suggests each value; you review before anything changes.',
-        action: { label: 'Add the basement', run: () => addAndSuggest(() => addFoundation('basement')) },
-      },
-      {
-        id: 'slab',
-        title: 'Garage slab on grade',
-        detail: 'Frost walls and the slab beside the basement.',
-        action: { label: 'Add the garage slab', run: () => addAndSuggest(() => addFoundation('garage')) },
-      },
-      {
-        id: 'floor0',
-        title: 'Floor over the basement',
-        detail: 'Sill plate, joists, beam and posts, subfloor. Sets the ground floor height.',
-        action: basement ? { label: 'Add the floor', run: () => addAndSuggest(() => addFloor(basement.id)) } : undefined,
-      },
-      {
-        id: 'check',
-        title: 'Check the shell against your plans',
-        detail:
-          checkSummary.total === 0
-            ? 'Mark each side and level as matching the plans or not.'
-            : `${checkSummary.matches + checkSummary.differs} of ${checkSummary.total} measurements checked${checkSummary.differs ? `, ${checkSummary.differs} differ` : ''}. Lay a plan over the model with Compare with plan to see differences.`,
-        action: {
-          label: 'Check the next one',
-          run: () => pickCheck(measureList.find((m) => checkStates[m.id] === 'unchecked' || checkStates[m.id] === 'changed')?.id ?? null),
-        },
-      },
-      { id: 'walls0', title: 'Ground floor walls', detail: 'Exterior walls, openings. Coming next.' },
-      { id: 'floor1', title: 'First floor, with the cantilever', detail: 'Over the garage, overhanging at the back. Coming soon.' },
-      { id: 'roof', title: 'Roofs and the green roof', detail: 'Including the mini green roof over the garage door. Coming soon.' },
-    ],
-    {
-      plans: plans.plans.length > 0,
-      scale: plans.plans.length > 0 && needScale.length === 0,
-      levels: project.levels.length > 0,
-      basement: foundations.some((s) => s.params.type === 'basement'),
-      slab: foundations.some((s) => s.params.type === 'slab-on-grade'),
-      floor0: hasFloorOverBasement,
-      check: checkSummary.total > 0 && checkSummary.open === 0,
-      walls0: 'soon',
-      floor1: 'soon',
-      roof: 'soon',
-    },
-  );
 
   const phase = project.phase ?? 1;
 
@@ -367,7 +244,12 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           >
             <Save /> Save to file
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => exportGlb(components, project.name)} disabled={components.length === 0}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => (phase === 1 && project.exterior ? exportDraftGlb(project.exterior, project.name) : exportGlb(components, project.name))}
+            disabled={phase === 1 && project.exterior ? false : components.length === 0}
+          >
             <Box /> Export to Blender
           </Button>
         </div>
@@ -390,7 +272,21 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
       </header>
       <PhaseBar phase={phase} onChange={(p) => dispatch({ type: 'set-phase', phase: p })} />
 
-      {phase === 2 ? (
+      {phase === 1 ? (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        <ExteriorPhase
+          project={project}
+          plans={plans}
+          units={units}
+          dark={dark}
+          autoDraft={!!newPlans?.length}
+          onDraft={(draft) => dispatch({ type: 'set-exterior', draft })}
+        />
+          {chatOpen && (
+            <ChatPanel project={project} units={units} onProjectChange={(p) => dispatch({ type: 'replace', project: p })} onClose={() => setChatOpen(false)} />
+          )}
+        </div>
+      ) : phase === 2 ? (
         <InteriorPhase
           project={project}
           onCheck={(id, check) => dispatch({ type: 'set-check', id, check })}
@@ -401,7 +297,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           units={units}
           dark={dark}
         />
-      ) : phase !== 1 ? (
+      ) : phase !== 3 ? (
         <PhasePlaceholder phase={phase} onBack={() => dispatch({ type: 'set-phase', phase: 1 })} />
       ) : (
       <div
@@ -413,30 +309,6 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
 
       {/* Left: steps and components */}
       <aside className="grid min-w-0 content-start gap-5 overflow-x-hidden overflow-y-auto border-b bg-background p-4 md:border-r md:border-b-0 [&>*]:min-w-0">
-        <section className="grid gap-2">
-          <PanelHeading>Guide</PanelHeading>
-          <GuidedSteps guides={guides} />
-        </section>
-
-        <Separator />
-
-        <section className="grid gap-2" ref={checksRef}>
-          <div className="flex items-center gap-2">
-            <PanelHeading>Checks</PanelHeading>
-            {checkSummary.differs > 0 && <Badge variant="destructive">{checkSummary.differs} {checkSummary.differs === 1 ? 'differs' : 'differ'}</Badge>}
-          </div>
-          <ChecksPanel
-            measures={measureList}
-            checks={checks}
-            plans={plans.plans}
-            units={units}
-            activeId={activeCheck}
-            comparePlanId={compare.planId}
-            onActivate={pickCheck}
-            onCheck={(id, check) => dispatch({ type: 'set-check', id, check })}
-          />
-        </section>
-
         <section className="grid gap-3">
           <div className="flex items-center gap-2">
             <PanelHeading>Plans</PanelHeading>
@@ -454,10 +326,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
             }}
             onUpdate={plans.update}
             onRemove={plans.remove}
-            onView={(p) => {
-              setScaleOnOpen(false);
-              setViewing(p);
-            }}
+            onView={(p) => setViewing(p)}
           />
         </section>
 
@@ -482,8 +351,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           <PanelHeading>Build steps</PanelHeading>
           {project.steps.length === 0 && (
             <p className="text-sm leading-relaxed text-muted-foreground">
-              No steps yet, so the 3D view is empty. The model is built from these steps: follow the{' '}
-              <strong className="text-foreground">Guide</strong> above, starting with the basement.
+              No structure steps yet. Add the foundations first (basement, then any slab on grade), then the floor system on each.
             </p>
           )}
           <ol className="grid gap-1.5">
@@ -601,10 +469,6 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           clay={settings.clay}
           dimensions={settings.showDimensions ? dimensions : undefined}
           units={units}
-          backdrop={compare.backdrop && { ...compare.backdrop, onPick: compare.pick, onDrag: compare.drag }}
-          checkStates={checkStates}
-          activeCheck={activeCheck}
-          onPickCheck={pickCheck}
         />
         <div className="absolute top-3 left-3 flex flex-wrap items-center gap-1.5">
           <Button
@@ -625,104 +489,6 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           >
             <Ruler /> Dimensions
           </Button>
-          <select
-            aria-label="Compare with plan"
-            className="h-8 rounded-md border bg-background px-2 text-sm shadow-xs"
-            value={compare.planId ?? ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v.startsWith('scale:')) {
-                const p = plans.plans.find((x) => x.id === v.slice(6));
-                if (p) {
-                  setScaleOnOpen(true);
-                  setViewing(p);
-                }
-              } else if (v === 'add') planInput.current?.click();
-              else compare.setPlanId(v || null);
-            }}
-          >
-            <option value="">Compare with plan…</option>
-            {comparable.length > 0 && (
-              <optgroup label="Lay over the model">
-                {comparable.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {planLabel(p)}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {needScale.length > 0 && (
-              <optgroup label="Set the scale first (opens the plan)">
-                {needScale.map((p) => (
-                  <option key={p.id} value={`scale:${p.id}`}>
-                    {planLabel(p)}: set scale…
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {cantCompare.length > 0 && (
-              <optgroup label="Can't be laid over the model (relabel under Plans)">
-                {cantCompare.map((p) => (
-                  <option key={p.id} value="" disabled>
-                    {p.name}: {planLabel(p)}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {plans.plans.length === 0 && <option value="add">Add plan PDFs…</option>}
-          </select>
-          {plans.plans.length > 0 && comparable.length === 0 && needScale.length === 0 && (
-            <span className="rounded-md bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-xs">
-              Label a plan as a floor plan or an elevation (left panel, Plans) to compare it.
-            </span>
-          )}
-          {compare.planId && (
-            <>
-              <label className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs text-muted-foreground shadow-xs">
-                Plan
-                <input
-                  type="range"
-                  min={0.15}
-                  max={1}
-                  step={0.05}
-                  value={compare.opacity}
-                  aria-label="Plan opacity"
-                  onChange={(e) => compare.setOpacity(Number(e.target.value))}
-                  className="w-20 accent-blue-700"
-                />
-              </label>
-              <Button
-                size="sm"
-                variant={compare.mode === 'align' ? 'default' : 'outline'}
-                className={cn(compare.mode !== 'align' && 'bg-background')}
-                aria-pressed={compare.mode === 'align'}
-                onClick={() => compare.setMode(compare.mode === 'align' ? 'view' : 'align')}
-                title="Click a point on the plan, then the matching corner of the model."
-              >
-                <Crosshair /> Align
-              </Button>
-              <Button
-                size="sm"
-                variant={compare.mode === 'move' ? 'default' : 'outline'}
-                className={cn(compare.mode !== 'move' && 'bg-background')}
-                aria-pressed={compare.mode === 'move'}
-                onClick={() => compare.setMode(compare.mode === 'move' ? 'view' : 'move')}
-                title="Drag the plan, or nudge it with the arrow keys (Shift for 1')."
-              >
-                <Move /> Move
-              </Button>
-              {compare.moved && (
-                <Button size="sm" variant="outline" className="bg-background" onClick={compare.resetPosition} title="Put the plan back where Set scale placed it.">
-                  <RotateCcw /> Reset
-                </Button>
-              )}
-              <Button size="sm" variant="outline" className="bg-background" onClick={() => (compare.setMode('view'), compare.setPlanId(null))}>
-                Back to 3D
-              </Button>
-            </>
-          )}
-          {compare.loading && <span className="text-xs text-muted-foreground">Loading plan…</span>}
-          {compare.error && <span className="text-xs text-destructive">{compare.error}</span>}
         </div>
         {chatOpen && (
           <ChatPanel
@@ -737,29 +503,15 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
             key={viewing.id}
             plan={viewing}
             units={units}
-            calibrate={scaleOnOpen}
             onClose={() => setViewing(null)}
             onCalibrate={(meta) => {
               plans.calibrate(meta);
-              if (scaleOnOpen) {
-                // Came from the Compare menu: go straight to comparing.
-                compare.setPlanId(meta.id);
-                setScaleOnOpen(false);
-                setViewing(null);
-              } else setViewing(meta);
+              setViewing(meta);
             }}
           />
         )}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-background/85 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
-          {compare.backdrop
-            ? compare.mode === 'align'
-              ? compare.alignFrom
-                ? '2. Now click the matching corner on the model (it snaps to the nearest corner)'
-                : '1. Click a corner on the plan you can also see on the model · Right-drag: pan · Scroll: zoom'
-              : compare.mode === 'move'
-                ? 'Drag the plan into place · Arrow keys: nudge 1" (Shift: 1\') · Right-drag: pan'
-                : 'Plan lines in blue over the model · Drag: pan · Scroll: zoom'
-            : 'Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it'}
+          {'Left-drag: rotate · Right-drag: pan · Scroll: zoom · Click a piece to select it'}
         </div>
       </main>
 

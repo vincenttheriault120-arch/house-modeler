@@ -25,6 +25,7 @@ export type Action =
   | { type: 'set-phase'; phase: NonNullable<Project['phase']> }
   | { type: 'set-check'; id: string; check: Check | null }
   | { type: 'set-interior'; storey: StoreyId; layout: StoreyLayout }
+  | { type: 'set-exterior'; draft: Project['exterior'] }
   | { type: 'replace'; project: Project };
 
 /**
@@ -133,6 +134,8 @@ function baseReducer(state: Project, action: Action): Project {
       const { [action.id]: _old, ...rest } = state.checks ?? {};
       return { ...state, checks: action.check ? { ...rest, [action.id]: action.check } : rest };
     }
+    case 'set-exterior':
+      return { ...state, exterior: action.draft };
     case 'replace':
       return action.project;
   }
