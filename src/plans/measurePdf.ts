@@ -1,17 +1,18 @@
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { describeMeasures, measureFromVectors, pageVectors } from './measure';
+import { describeMeasures, measureFromVectors, pageVectors, type SheetMeasures } from './measure';
 import { getPlanData, type PlanMeta } from './store';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 /**
  * Heights measured from the lines of every elevation and section among the plans, as text
- * for Claude. Sheets without at least three written levels are skipped. Never throws: a
+ * for Claude and as data for the app's own checks. Sheets without at least three written levels are skipped. Never throws: a
  * sheet that can't be measured is simply left out.
  */
-export async function measurePlans(plans: PlanMeta[]): Promise<string> {
+export async function measurePlans(plans: PlanMeta[]): Promise<{ text: string; sheets: { title: string; m: SheetMeasures }[] }> {
   const out: string[] = [];
+  const sheets: { title: string; m: SheetMeasures }[] = [];
   for (const plan of plans) {
     try {
       const data = await getPlanData(plan.id);
@@ -24,7 +25,10 @@ export async function measurePlans(plans: PlanMeta[]): Promise<string> {
           const page = await doc.getPage(n);
           const { texts, segs } = await pageVectors(page, pdfjs.OPS);
           const m = measureFromVectors(texts, segs);
-          if (m) out.push(describeMeasures(doc.numPages > 1 ? `${plan.name}, page ${n}` : plan.name, m));
+          if (!m) continue;
+          const title = doc.numPages > 1 ? `${plan.name}, page ${n}` : plan.name;
+          out.push(describeMeasures(title, m));
+          sheets.push({ title, m });
         }
       } finally {
         void task.destroy();
@@ -33,5 +37,5 @@ export async function measurePlans(plans: PlanMeta[]): Promise<string> {
       // Not measurable (scanned image, odd PDF): Claude reads it by eye as before.
     }
   }
-  return out.join('\n\n');
+  return { text: out.join('\n\n'), sheets };
 }
