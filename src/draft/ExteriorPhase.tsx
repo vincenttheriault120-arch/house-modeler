@@ -55,6 +55,7 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
   const [planId, setPlanId] = useState<string | null>(null);
   const [activePart, setActivePart] = useState<string | null>(null);
   const [activeMeasure, setActiveMeasure] = useState<string | null>(null);
+  const [hoverMeasure, setHoverMeasure] = useState<string | null>(null);
   const [plansOpen, setPlansOpen] = useState(!draft);
   const [gen, setGen] = useState<{ started: number; chars: number; stage?: DraftStage } | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
@@ -311,6 +312,8 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
                   dark={dark}
                   activePart={activePart}
                   activeMeasure={activeMeasure}
+                  hoverMeasure={hoverMeasure}
+                  onHoverMeasure={setHoverMeasure}
                   onPickPart={(p) => {
                     setActivePart(p);
                     setActiveMeasure(null);
@@ -334,7 +337,11 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
                   />
                 )}
                 <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-background/85 px-2 py-0.5 text-xs text-muted-foreground shadow-sm">
-                  {view === '3d' ? 'Drag: rotate · Right-drag: pan · Scroll: zoom · Click a number to check it' : 'Drag: pan · Scroll: zoom · Click a number to check it'}
+                  {view === '3d'
+                    ? activePart
+                      ? 'Drag: rotate · Right-drag: pan · Scroll: zoom · Click empty space to clear'
+                      : 'Click a part to see its measurements · Drag: rotate · Right-drag: pan · Scroll: zoom'
+                    : 'Drag: pan · Scroll: zoom · Click a number to check it'}
                 </span>
               </div>
               {view !== '3d' && beside && (
@@ -382,6 +389,8 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
           dark={dark}
           activePart={activePart}
           activeMeasure={activeMeasure}
+          hoverMeasure={hoverMeasure}
+          onHover={setHoverMeasure}
           onPick={(id, part) => {
             setActiveMeasure(id);
             setActivePart(part);
@@ -548,6 +557,8 @@ function CheckPanel({
   dark,
   activePart,
   activeMeasure,
+  hoverMeasure,
+  onHover,
   onPick,
   onChange,
 }: {
@@ -558,6 +569,8 @@ function CheckPanel({
   dark: boolean;
   activePart: string | null;
   activeMeasure: string | null;
+  hoverMeasure: string | null;
+  onHover: (id: string | null) => void;
   onPick: (id: string | null, part: string | null) => void;
   onChange: (d: ExteriorDraft) => void;
 }) {
@@ -580,23 +593,24 @@ function CheckPanel({
   const p = view === '3d' ? null : viewProgress(draft, view);
   const all = progress(draft);
   const viewName = view === '3d' ? 'The whole draft' : VIEWS.find((v) => v.id === view)!.name;
-  const shownGroups = view === '3d' && activePart ? groups.filter(([part]) => part === activePart) : groups;
+  // In 3D, the picked part (and its roof, drawn with it) only.
+  const shownGroups = view === '3d' && activePart ? groups.filter(([part]) => part === activePart || part === `${activePart}:roof`) : groups;
 
   return (
     <aside className="col-span-full flex min-h-0 flex-col border-t bg-background xl:col-span-1 xl:border-t-0 xl:border-l" aria-label="Measurements">
-      <div className="grid gap-2 border-b p-3">
+      <div className="grid max-h-[45vh] shrink-0 gap-2 overflow-y-auto border-b p-3">
         <div className="flex items-center gap-2">
           <h2 className="text-base font-semibold">{viewName}</h2>
           {p?.done && <Badge className="bg-success text-white">Checked</Badge>}
         </div>
         {view === '3d' ? (
           <>
-            <p className="text-xs leading-relaxed text-muted-foreground">{draft.summary}</p>
-            {draft.conflicts && draft.conflicts.length > 0 && <PlansDisagree conflicts={draft.conflicts} />}
             <p className="text-xs text-muted-foreground">
               {all.ok} of {all.total} measurements checked · <span className="text-red-600">{all.ai} inferred</span>. Pick a drawing on the left to check it
               against your plan.
             </p>
+            {draft.summary && <DraftSummary summary={draft.summary} />}
+            {draft.conflicts && draft.conflicts.length > 0 && <PlansDisagree conflicts={draft.conflicts} />}
           </>
         ) : (
           <>
@@ -648,6 +662,8 @@ function CheckPanel({
                   units={units}
                   dark={dark}
                   active={m.id === activeMeasure}
+                  hovered={m.id === hoverMeasure}
+                  onHover={onHover}
                   onFocus={() => onPick(m.id, m.part)}
                   onOk={() => onChange(setDim(draft, m.id, { ok: !m.dim.ok }))}
                   onValue={(mm) => onChange(setDim(draft, m.id, { mm }))}
@@ -676,6 +692,8 @@ function MeasureRow({
   units,
   dark,
   active,
+  hovered,
+  onHover,
   onFocus,
   onOk,
   onValue,
@@ -684,6 +702,8 @@ function MeasureRow({
   units: UnitSystem;
   dark: boolean;
   active: boolean;
+  hovered: boolean;
+  onHover: (id: string | null) => void;
   onFocus: () => void;
   onOk: () => void;
   onValue: (mm: number) => void;
@@ -692,7 +712,9 @@ function MeasureRow({
   return (
     <li
       data-key={m.id}
-      className={cn('grid grid-cols-[1fr_7.5rem_auto] items-center gap-x-1.5 rounded-md px-1 py-1', active && 'bg-blue-50 ring-1 ring-blue-700 dark:bg-blue-950')}
+      className={cn('grid grid-cols-[1fr_7.5rem_auto] items-center gap-x-1.5 rounded-md px-1 py-1', hovered && !active && 'bg-accent', active && 'bg-blue-50 ring-1 ring-blue-700 dark:bg-blue-950')}
+      onPointerEnter={() => onHover(m.id)}
+      onPointerLeave={() => onHover(null)}
       onFocusCapture={onFocus}
       onClick={onFocus}
     >
@@ -891,7 +913,8 @@ function ScorePanel(props: { score: Score | null; error: string | null; onLoad: 
 
 /** Where the drawings gave different values for the same thing, and which one the draft uses. */
 function PlansDisagree({ conflicts }: { conflicts: PlanConflict[] }) {
-  const [open, setOpen] = useState(true);
+  // Closed by default so the measurements stay in reach.
+  const [open, setOpen] = useState(false);
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-xs dark:border-amber-800 dark:bg-amber-950/30">
       <button type="button" className="flex w-full items-center gap-1 text-left font-medium" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
@@ -907,6 +930,20 @@ function PlansDisagree({ conflicts }: { conflicts: PlanConflict[] }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Claude's description of the draft: one line, opens to the full text. */
+function DraftSummary({ summary }: { summary: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border p-2 text-xs">
+      <button type="button" className="flex w-full items-center gap-1 text-left font-medium" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+        About this draft
+      </button>
+      <p className={cn('mt-1 leading-relaxed text-muted-foreground', !open && 'line-clamp-2')}>{summary}</p>
     </div>
   );
 }

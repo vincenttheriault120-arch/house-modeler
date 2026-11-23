@@ -28,7 +28,15 @@ export interface Measure {
   level?: boolean;
   /** Belongs to a door or window. */
   opening?: boolean;
+  /**
+   * In 3D the line hugs its own part instead of standing in the drawing's chains,
+   * so it reads as belonging to that part. Falls back to a/b/from.
+   */
+  near?: { a: P3; b: P3; from?: [P3, P3] };
 }
+
+/** How far a 3D dimension line stands off the part it measures (mm). */
+const NEAR = 350;
 
 /** A piece of the clay model as flat triangles (plan mm). */
 export interface DraftMesh {
@@ -166,7 +174,10 @@ export function measures(draft: ExteriorDraft): Measure[] {
         { x: x0, y: y0, z: zb },
         { x: x1, y: y0, z: zb },
       ],
+      near: { a: { x: x0, y: y0 - NEAR, z: zb }, b: { x: x1, y: y0 - NEAR, z: zb }, from: [{ x: x0, y: y0, z: zb }, { x: x1, y: y0, z: zb }] },
     });
+    const leftSide = (x0 + x1) / 2 < midX;
+    const sideX = leftSide ? x0 - NEAR : x1 + NEAR;
     if (Math.abs(b.x.mm - box.x0) > 1) {
       const z = zLow - TIER * (n + i + 1);
       out.push({
@@ -178,6 +189,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
         views: ['front', 'back', ...plan],
         a: { x: box.x0, y: wy, z },
         b: { x: x0, y: wy, z },
+        near: { a: { x: box.x0, y: y0 - 2 * NEAR, z: zb }, b: { x: x0, y: y0 - 2 * NEAR, z: zb }, from: [{ x: box.x0, y: y0, z: zb }, { x: x0, y: y0, z: zb }] },
       });
     }
     const dx = box.x0 - GAP / 3;
@@ -194,6 +206,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
         { x: x0, y: y0, z: zb },
         { x: x0, y: y1, z: zb },
       ],
+      near: { a: { x: sideX, y: y0, z: zb }, b: { x: sideX, y: y1, z: zb }, from: [{ x: leftSide ? x0 : x1, y: y0, z: zb }, { x: leftSide ? x0 : x1, y: y1, z: zb }] },
     });
     if (Math.abs(b.y.mm - box.y0) > 1) {
       const z = zLow - TIER * (n + i + 1);
@@ -206,11 +219,11 @@ export function measures(draft: ExteriorDraft): Measure[] {
         views: ['left', 'right', ...plan],
         a: { x: dx, y: box.y0, z },
         b: { x: dx, y: y0, z },
+        near: { a: { x: leftSide ? x0 - 2 * NEAR : x1 + 2 * NEAR, y: box.y0, z: zb }, b: { x: leftSide ? x0 - 2 * NEAR : x1 + 2 * NEAR, y: y0, z: zb } },
       });
     }
     // Heights stand beside the block, on the outer side of the house.
     // Spread them apart in both directions so they stay apart from the front and from the side.
-    const leftSide = (x0 + x1) / 2 < midX;
     const col = draft.blocks.filter((o, j) => j < i && (o.x.mm + o.x.mm + o.width.mm) / 2 < midX === leftSide).length;
     const hx = leftSide ? box.x0 - GAP - col * COL : box.x1 + GAP + col * COL;
     const hy = box.y0 - GAP - i * COL;
@@ -227,6 +240,8 @@ export function measures(draft: ExteriorDraft): Measure[] {
         { x: leftSide ? x0 : x1, y: y0, z: zb },
         { x: leftSide ? x0 : x1, y: y0, z: zt },
       ],
+      // On the front corner, just off the wall.
+      near: { a: { x: sideX, y: y0 - NEAR, z: zb }, b: { x: sideX, y: y0 - NEAR, z: zt } },
     });
     if (Math.abs(zb) > 1) {
       out.push({
@@ -238,6 +253,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
         views: ELEVATIONS,
         a: { x: hx, y: hy, z: 0 },
         b: { x: hx, y: hy, z: zb },
+        near: { a: { x: sideX + (leftSide ? -NEAR : NEAR), y: y0 - NEAR, z: 0 }, b: { x: sideX + (leftSide ? -NEAR : NEAR), y: y0 - NEAR, z: zb } },
       });
     }
 
