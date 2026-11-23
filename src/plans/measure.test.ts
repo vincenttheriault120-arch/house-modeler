@@ -51,6 +51,29 @@ describe('measuring heights from a drawing', () => {
     expect(m.peaks[0].at).toBeCloseTo(15, 2);
   });
 
+  it('measures the eave where the roof slopes end, even below a written ceiling level', () => {
+    const { texts, segs } = sheet();
+    // A second house to the right: ceiling level 118'-0" written, but its hip roof is drawn from
+    // 117'-1" (11" lower), in two pieces per side, with a steeper hatch line carrying on below it.
+    const x0 = 60;
+    segs.push(seg(X(x0 - 1), Y(117 + 1 / 12), X(x0 + 4.5), Y(117 + 1 / 12 + 3.5)), seg(X(x0 + 4.5), Y(117 + 1 / 12 + 3.5), X(x0 + 10), Y(124 + 1 / 12)));
+    segs.push(seg(X(x0 + 21), Y(117 + 1 / 12), X(x0 + 10), Y(124 + 1 / 12)));
+    segs.push(seg(X(x0 - 1), Y(117 + 1 / 12), X(x0 - 3), Y(112)));
+    segs.push(seg(X(x0), Y(100), X(x0), Y(117)), seg(X(x0 + 20), Y(100), X(x0 + 20), Y(117)));
+    for (const [str, ft] of [[`100'-0"`, 100], [`109'-0"`, 109], [`118'-0"`, 118]] as const) {
+      segs.push(seg(X(x0 + 31), Y(ft), X(x0 + 38), Y(ft)));
+      texts.push(label(str, X(x0 + 34), Y(ft) + 5));
+    }
+    const m = measureFromVectors(texts, segs)!;
+    const hip = m.peaks.find((p) => Math.abs(p.height - (124 + 1 / 12)) < 0.05)!;
+    expect(hip.eave!.height).toBeCloseTo(117 + 1 / 12, 2);
+    expect(hip.eave!.from).toBeCloseTo(x0 - 1, 1);
+    const main = m.peaks.find((p) => Math.abs(p.height - 126.25) < 0.05)!;
+    expect(main.eave!.height).toBeCloseTo(118, 2);
+    expect(describeMeasures('Front', m)).toContain(`under the 124' 1" peak, 117' 1"`);
+    expect(fmtFt(118.625)).toBe(`118' 7 1/2"`);
+  });
+
   it('lists edges, with siding as one entry', () => {
     const { texts, segs } = sheet();
     const m = measureFromVectors(texts, segs)!;
