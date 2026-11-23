@@ -17,6 +17,9 @@ interface Props {
   dark: boolean;
   activePart: string | null;
   activeMeasure: string | null;
+  /** The measurement under the pointer, here or in the list. */
+  hoverMeasure?: string | null;
+  onHoverMeasure?: (id: string | null) => void;
   onPickPart: (part: string | null) => void;
   onPickMeasure: (id: string) => void;
 }
@@ -36,7 +39,8 @@ const VIEW_AXES: Record<ViewId, { from: [number, number, number]; up: [number, n
 };
 
 /** The clay draft in 3D, or seen straight on like one of the drawings, with its measurements. */
-export function DraftViewport({ draft, view, measures, units, dark, activePart, activeMeasure, onPickPart, onPickMeasure }: Props) {
+export function DraftViewport({ draft, view, measures, units, dark, activePart, activeMeasure, hoverMeasure = null, onHoverMeasure, onPickPart, onPickMeasure }: Props) {
+  const hoverPart = hoverMeasure ? (measures.find((m) => m.id === hoverMeasure)?.part ?? null) : null;
   const meshes = useMemo(() => {
     const all = draftMeshes(draft);
     if (view === 'ground' || view === 'first') {
@@ -67,10 +71,22 @@ export function DraftViewport({ draft, view, measures, units, dark, activePart, 
       <directionalLight position={[-12, 8, -10]} intensity={0.45} />
 
       {meshes.map((m) => (
-        <ClayMesh key={m.id + m.positions.length} mesh={m} dark={dark} active={activePart === m.part} onPick={onPickPart} />
+        <ClayMesh key={m.id + m.positions.length} mesh={m} dark={dark} active={activePart === m.part || hoverPart === m.part} onPick={onPickPart} />
       ))}
 
-      <Dimensions measures={measures} labelsRight={levelLabelsRight(view)} outward={view === '3d' ? { x: -1, y: 0, z: 0 } : SCREEN[view].right} in3d={view === '3d'} units={units} dark={dark} activePart={activePart} activeMeasure={activeMeasure} onPick={onPickMeasure} />
+      <Dimensions
+        measures={measures}
+        labelsRight={levelLabelsRight(view)}
+        outward={view === '3d' ? { x: -1, y: 0, z: 0 } : SCREEN[view].right}
+        in3d={view === '3d'}
+        units={units}
+        dark={dark}
+        activePart={activePart}
+        activeMeasure={activeMeasure}
+        hoverMeasure={hoverMeasure}
+        onHover={onHoverMeasure}
+        onPick={onPickMeasure}
+      />
 
       <Grid
         args={[200, 200]}
@@ -240,6 +256,8 @@ function Dimensions({
   dark,
   activePart,
   activeMeasure,
+  hoverMeasure,
+  onHover,
   onPick,
 }: {
   measures: Measure[];
@@ -251,6 +269,8 @@ function Dimensions({
   dark: boolean;
   activePart: string | null;
   activeMeasure: string | null;
+  hoverMeasure: string | null;
+  onHover?: (id: string | null) => void;
   onPick: (id: string) => void;
 }) {
   // drei's Html drops the first label under strict mode's double mount; wait a frame.
@@ -263,7 +283,8 @@ function Dimensions({
   const ink = dark ? '#e7e5e4' : '#1c1917';
   const red = dark ? '#f87171' : '#dc2626';
   const faint = dark ? '#57534e' : '#c4c0bb';
-  const levels = measures.filter((m) => m.level);
+  const shown = visibleMeasures(measures, { in3d, activePart, activeMeasure, hoverMeasure });
+  const levels = shown.filter((m) => m.level);
   // Levels a foot apart would print over each other: put every other close one in a second column.
   const shift = new Map<string, number>();
   const last = [-Infinity, -Infinity];
@@ -276,17 +297,16 @@ function Dimensions({
   const lvlBottom = levels.reduce((z, m) => Math.min(z, m.a.z), 0);
   return (
     <group>
-      {measures.map((m) => {
-        if (m.detail && m.part !== activePart && m.id !== activeMeasure) return null;
-        // In 3D, door and window sizes would show through the walls: only the picked one's.
-        if (in3d && m.opening && m.part !== activePart) return null;
-        const on = m.id === activeMeasure;
+      {shown.map((m) => {
+        const on = m.id === activeMeasure || m.id === hoverMeasure;
         const color = on ? '#1d4ed8' : m.dim.source === 'ai' ? red : ink;
         const label = (
           <button
             type="button"
             onClick={() => onPick(m.id)}
-            title={`${m.partName}: ${m.label}${m.dim.ref ? `\n${m.dim.ref}` : ''}`}
+            onPointerEnter={() => onHover?.(m.id)}
+            onPointerLeave={() => onHover?.(null)}
+            title={`${m.partName}: ${m.label}${m.dim.ref ? `\n${m.dim.ref}` : ''}${m.same?.length ? `\nSame as: ${m.same.join(', ')}` : ''}`}
             className={cn(
               pillBase,
               dark ? 'border-stone-600 bg-stone-900/90' : 'border-stone-300 bg-white/95',
@@ -297,6 +317,7 @@ function Dimensions({
             )}
           >
             {m.dim.ok && <span className="text-green-600">✓ </span>}
+            {in3d && !m.level && <span className="font-normal opacity-70">{shortLabel(m)} </span>}
             {m.level ? (
               // Just the height: the name is in the tooltip and the list, so close levels don't collide.
               (m.dim.mm > 0.5 ? '+' : '') + formatLength(m.dim.mm, units)
@@ -320,13 +341,14 @@ function Dimensions({
             </group>
           );
         }
-        const a = toScene(m.a);
-        const b = toScene(m.b);
+        const line = in3d && m.near ? m.near : m;
+        const a = toScene(line.a);
+        const b = toScene(line.b);
         const mid: [number, number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
         return (
           <group key={m.id}>
-            {m.from && <Line points={[toScene(m.from[0]), a]} color={faint} lineWidth={1} />}
-            {m.from && <Line points={[toScene(m.from[1]), b]} color={faint} lineWidth={1} />}
+            {line.from && <Line points={[toScene(line.from[0]), a]} color={faint} lineWidth={1} />}
+            {line.from && <Line points={[toScene(line.from[1]), b]} color={faint} lineWidth={1} />}
             <Line points={[a, b]} color={color} lineWidth={on ? 3 : 1.4} />
             <Tick at={a} color={color} />
             <Tick at={b} color={color} />
@@ -346,6 +368,65 @@ function Dimensions({
     </group>
   );
 }
+
+type Shown = Measure & { same?: string[] };
+
+/**
+ * Which measurements to draw, so each number clearly belongs to one part.
+ * 3D: only the picked part (and its roof), the picked number and the one under the pointer.
+ * Drawings: everything, but a span several parts share (the same width on three storeys) is drawn once.
+ */
+export function visibleMeasures(
+  measures: Measure[],
+  o: { in3d: boolean; activePart: string | null; activeMeasure: string | null; hoverMeasure: string | null },
+): Shown[] {
+  const pinned = (m: Measure) => m.id === o.activeMeasure || m.id === o.hoverMeasure;
+  if (o.in3d) {
+    const ofPart = (m: Measure) => !!o.activePart && (m.part === o.activePart || m.part === `${o.activePart}:roof`);
+    return measures.filter((m) => pinned(m) || ofPart(m));
+  }
+  const out: Shown[] = [];
+  const seen = new Map<string, Shown>();
+  for (const m of measures) {
+    if (m.detail && m.part !== o.activePart && !pinned(m)) continue;
+    if (m.level) {
+      out.push(m);
+      continue;
+    }
+    // Same direction, same ends, same value: one line says it for all of them.
+    const d = { x: m.b.x - m.a.x, y: m.b.y - m.a.y, z: m.b.z - m.a.z };
+    const axis = Math.abs(d.x) >= Math.abs(d.y) && Math.abs(d.x) >= Math.abs(d.z) ? 'x' : Math.abs(d.y) >= Math.abs(d.z) ? 'y' : 'z';
+    const lo = Math.round(Math.min(m.a[axis], m.b[axis]) / 5);
+    const hi = Math.round(Math.max(m.a[axis], m.b[axis]) / 5);
+    const key = `${axis}|${lo}|${hi}|${Math.round(m.dim.mm / 5)}|${m.dim.source}`;
+    const first = seen.get(key);
+    if (first && !pinned(m)) {
+      (first.same ??= []).push(m.partName);
+      continue;
+    }
+    const s: Shown = { ...m };
+    if (!first) seen.set(key, s);
+    out.push(s);
+  }
+  return out;
+}
+
+const SHORT: Record<string, string> = {
+  width: 'Width',
+  depth: 'Depth',
+  height: 'Height',
+  x: 'From left',
+  y: 'From front',
+  base: 'Base',
+  rise: 'Rise',
+  overhang: 'Overhang',
+  sill: 'Sill',
+  offset: 'From end',
+  slab: 'Slab',
+  wall: 'Wall',
+};
+/** A one-word name for a 3D label, where the part is already obvious. */
+const shortLabel = (m: Measure) => SHORT[m.id.slice(m.id.lastIndexOf('.') + 1)] ?? m.label;
 
 function Tick({ at, color }: { at: [number, number, number]; color: string }) {
   const r = 0.12;
