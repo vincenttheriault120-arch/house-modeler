@@ -8,7 +8,6 @@ const FT = 304.8;
 const v = (value: string, from_plans = true) => ({ value, from_plans, ref: from_plans ? 'plan' : 'scaled' });
 
 const answer: DraftAnswer = {
-  cross_check: 'notes',
   summary: 'Two volumes.',
   levels: [
     { name: 'Ground floor', elevation: v("2' 7\"") },
@@ -117,6 +116,11 @@ describe('exterior draft', () => {
     // Seen from the left, at grade near the front: the main house.
     const l = placeOpening(d, 'left', 40 * FT, 3 * FT, 3 * FT)!;
     expect(l.blockId).toBe(d.blocks[0].id);
+  });
+
+  it('leaves out an opening with no wall at its height instead of floating it', () => {
+    expect(placeOpening(d, 'front', 2 * FT, 60 * FT, 3 * FT)).toBeNull();
+    expect(placeOpening(d, 'front', 2 * FT, 5 * FT, 3 * FT)).not.toBeNull();
   });
 
   it('reports what cannot be right', () => {
