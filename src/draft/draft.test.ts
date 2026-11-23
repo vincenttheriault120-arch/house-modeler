@@ -8,6 +8,7 @@ const FT = 304.8;
 const v = (value: string, from_plans = true) => ({ value, from_plans, ref: from_plans ? 'plan' : 'scaled' });
 
 const answer: DraftAnswer = {
+  cross_check: 'notes',
   summary: 'Two volumes.',
   levels: [
     { name: 'Ground floor', elevation: v("2' 7\"") },
@@ -22,7 +23,7 @@ const answer: DraftAnswer = {
       depth: v("26' 1\""),
       base: v('0"', false),
       wall_height: v("19' 7\""),
-      roof: { type: 'hip', rise: v("7' 8\"", false), overhang: v('6"'), ridge_along: 'depth', low_side: 'left' },
+      roof: { type: 'hip', rise: v("7' 8\"", false), overhang: v('6"'), ridge_along: 'depth', low_side: 'left', facets: [] },
     },
     {
       name: 'Upper',
@@ -32,7 +33,7 @@ const answer: DraftAnswer = {
       depth: v("39' 3\""),
       base: v("10' 9\""),
       wall_height: v("7' 10\""),
-      roof: { type: 'shed', rise: v("3' 9\""), overhang: v('0"', false), ridge_along: 'depth', low_side: 'left' },
+      roof: { type: 'shed', rise: v("3' 9\""), overhang: v('0"', false), ridge_along: 'depth', low_side: 'left', facets: [] },
     },
   ],
   openings: [
@@ -131,6 +132,51 @@ describe('exterior draft', () => {
     const roof = m.find((x) => x.kind === 'roof')!;
     const zs = roof.positions.filter((_, i) => i % 3 === 2);
     expect(Math.max(...zs)).toBeCloseTo(10 * FT + 9 * 25.4 + 7 * FT + 10 * 25.4 + 3 * FT + 9 * 25.4);
+  });
+
+  it('builds a roof that dips along valley lines from its facets', () => {
+    const c = (across: string, back: string, height: string) => ({ across, back, height });
+    const folded: DraftAnswer = {
+      ...answer,
+      openings: [],
+      volumes: [
+        {
+          ...answer.volumes[1],
+          roof: {
+            ...answer.volumes[1].roof,
+            type: 'folded',
+            rise: v("3' 0\""),
+            facets: [
+              // Back strip slopes toward the front, down to a fold 14' from the back.
+              { corners: [c('0"', "25' 3\"", '0"'), c("5' 0\"", "25' 3\"", '0"'), c("18' 1\"", "39' 3\"", "3' 9\""), c('0"', "39' 3\"", "3' 9\"")] },
+              // Right part slopes toward the left, down to a valley 5' from the left wall.
+              { corners: [c("5' 0\"", "25' 3\"", '0"'), c("5' 0\"", '0"', '0"'), c("18' 1\"", '0"', "3' 9\""), c("18' 1\"", "39' 3\"", "3' 9\"")] },
+              // Low strip with the drains.
+              { corners: [c('0"', '0"', '0"'), c("5' 0\"", '0"', '0"'), c("5' 0\"", "25' 3\"", '0"'), c('0"', "25' 3\"", '0"')] },
+            ],
+          },
+        },
+      ],
+    };
+    const fd = answerToDraft(folded, 'imperial');
+    const b = fd.blocks[0];
+    expect(b.roof.type).toBe('folded');
+    expect(b.roof.facets).toHaveLength(3);
+    // The rise follows the highest corner even though Claude wrote 3' 0".
+    expect(b.roof.rise.mm).toBeCloseTo(3 * FT + 9 * 25.4);
+    const roof = draftMeshes(fd).find((x) => x.kind === 'roof')!;
+    const zs = roof.positions.filter((_, i) => i % 3 === 2);
+    const wallTop = b.base.mm + b.height.mm;
+    expect(Math.min(...zs)).toBeCloseTo(wallTop);
+    expect(Math.max(...zs)).toBeCloseTo(wallTop + b.roof.rise.mm);
+    // The left wall rises to meet the sloping back strip.
+    const leftWall = [];
+    for (let i = 0; i < roof.positions.length; i += 9) {
+      const xs = [0, 3, 6].map((k) => roof.positions[i + k]);
+      if (xs.every((x) => Math.abs(x - b.x.mm) < 1)) leftWall.push(i);
+    }
+    expect(leftWall.length).toBeGreaterThan(0);
+    expect(measures(fd).find((m) => m.id.endsWith(':roof.rise'))!.label).toBe('Highest roof edge above the lowest');
   });
 
   it('removes a volume with its openings', () => {

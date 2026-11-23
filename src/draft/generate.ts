@@ -4,9 +4,10 @@ import * as z from 'zod/v4';
 import { MODEL } from '../chat/claude';
 import { getPlanData, PLAN_KINDS, type PlanMeta } from '../plans/store';
 import { parseLength, type UnitSystem } from '../units';
-import { draftProblems, placeOpening } from './model';
+import { draftProblems, placeOpening, roofFacets } from './model';
 export { draftProblems, placeOpening };
-import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind, RoofType } from './types';
+import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind, Roof, RoofType } from './types';
+import { SKETCH_TITLES, sketchPng, type SketchView } from './sketch';
 
 const Value = z.object({
   value: z.string().describe('Length with units, e.g. "20\' 1\\"", "10\' 5\\"", "6 1/4\\"" or "2400 mm".'),
@@ -18,7 +19,18 @@ const Value = z.object({
 
 const FACES = ['front', 'back', 'left', 'right'] as const;
 
+const Corner = z.object({
+  across: z.string().describe("Length from this volume's LEFT outside wall (seen from the front), with units."),
+  back: z.string().describe("Length back from this volume's FRONT outside wall."),
+  height: z.string().describe('Height of the roof surface at this corner ABOVE THE TOP OF THE WALLS (wall_height). 0 at the lowest roof edge.'),
+});
+
 export const DraftSchema = z.object({
+  cross_check: z
+    .string()
+    .describe(
+      'Your working notes, written BEFORE the numbers, one short paragraph per volume: its outline on the roof plan and floor plans, what each of the four elevations shows of it (width or depth, wall tops, roof line), and how they agree. Then the same for each roof: the lines and arrows on the roof plan and the heights each elevation gives its edges.',
+    ),
   summary: z.string().describe('Two to four plain sentences: what the house is made of, and the inferred values most worth checking.'),
   levels: z
     .array(z.object({ name: z.string().describe('e.g. "Ground floor", "First floor", "First floor ceiling", "Low roof", "Roof top", "Basement slab"'), elevation: Value }))
@@ -37,9 +49,9 @@ export const DraftSchema = z.object({
         ),
         roof: z.object({
           type: z
-            .enum(['flat', 'parapet', 'shed', 'gable', 'hip'])
+            .enum(['flat', 'parapet', 'shed', 'gable', 'hip', 'folded'])
             .describe(
-              'parapet = the outline on the elevations is a flat-topped box, but the roof surface inside it slopes down (a depression behind parapet walls). Use it instead of shed when the elevations show a flat top line with a sloping roof line drawn inside it.',
+              'folded = any roof the roof plan draws as several regions separated by lines (valleys, folds, ridges) that is not a plain gable or hip: e.g. a flat-looking rectangle that dips down along valley lines toward drains. Give its facets. parapet = flat-topped walls all around with ONE sloping roof plane hidden inside.',
             ),
           rise: Value.describe(
             'Top of walls to ridge (gable, hip), to the high side (shed), or to the top of the parapet (parapet). For a flat roof: roof thickness.',
@@ -47,6 +59,11 @@ export const DraftSchema = z.object({
           overhang: Value.describe('How far the roof extends past the walls. 0 if flush.'),
           ridge_along: z.enum(['width', 'depth']).describe('Gable or hip: the direction the ridge runs.'),
           low_side: z.enum(FACES).describe('Shed or parapet: the side the roof surface slopes down toward.'),
+          facets: z
+            .array(z.object({ corners: z.array(Corner).describe('The corners of this flat region, in order around it.') }))
+            .describe(
+              'folded only (empty otherwise): every region the roof plan draws between the lines inside this roof outline, each a flat facet. Together they cover the whole roof. Corners on the outside walls set the height of the wall top there, so the walls follow the roof.',
+            ),
         }),
       }),
     )
@@ -80,20 +97,26 @@ Volumes:
 - Use outside wall faces. Split into separate boxes where the footprint, the height or the roof changes. A storey that overhangs (cantilevers) the one below is its own box with its base at its floor level.
 - Boxes must not overlap. A two-storey part with one roof is ONE box from its bottom to the top of its upper walls.
 - Exclude decks, steps, terraces, foundations below grade and small canopies.
+- ONE roof outline on the roof plan over ONE continuous set of walls is ONE volume. Lines drawn INSIDE a roof outline are the roof's own ridges, hips, valleys or folds: never split a volume at them.
 - Roof rise: for hip and gable roofs the ridge height is often not dimensioned; scale it from the elevations and say so.
+
+Each drawing is a 2D view of the same 3D house. No single view is enough: build each volume and roof in 3D by combining them, and only accept a shape that looks right on every view. Write this reasoning in cross_check before the numbers.
 
 How to work, in this order:
 1. Footprints (x, y, width, depth) from the roof plan and the floor plans, using the written chain dimensions. A storey that sticks out past the one below (a cantilever) or is set back is its own volume.
 2. Heights from the elevations and sections: convert every level to grade = 0, then base and wall_height of each volume.
-3. Cross-check every volume on EVERY elevation where it shows. Where an elevation draws one continuous wall (one rectangle, one cladding), the volumes behind it must line up exactly there (same x or y edge, same top). Fix the numbers until each elevation's outline matches the drawing.
-4. Roofs: read their shape on the elevations AND the roof plan (arrows show slope direction). A flat-topped outline with a sloping line inside is a parapet roof, not a shed roof.
+3. Cross-check every volume on EVERY view where it shows: its width on the front and back elevations, its depth on the left and right elevations, its outline on the roof plan, and its wall tops on all four elevations. Where an elevation draws one continuous wall (one rectangle, one cladding), the volumes behind it must line up exactly there (same x or y edge, same top). Fix the numbers until every view's outline matches its drawing.
+4. Roofs, in 3D. The roof plan (plan de toiture) gives the shape from above: its outline, the lines inside it (ridges, hips, valleys, folds), slope arrows (they point DOWNHILL), and small circles (drains, at the LOW points). The elevations give heights: the levels written beside them (e.g. "niveau haut du toit" = roof top, "niveau bas du toit" = low roof), and the roof's edge on each side (flat at one level, or sloping from one level to another). Combine them: each region between lines on the roof plan is one flat facet; the height of each of its corners comes from the elevations where that corner shows; check that every arrow points downhill on your facets and the drains sit at the bottom. Then check the result on every elevation: a wall whose top slopes on a side elevation means the roof edge on that side slopes; a roof surface drawn (hatched or stippled) above a wall on an elevation means the roof rises behind that wall.
+5. Pick the roof type: hip and gable as usual; shed for one plane with the walls following it; parapet for flat-topped walls all around with one plane hidden inside; folded for anything made of several facets that is not a plain hip or gable (for example a rectangle whose edges are high on some sides and that dips along valley lines toward drains). For folded, wall_height runs to the LOWEST roof edge and rise to the HIGHEST.
 
 Openings: list every door, window, patio door and garage door visible on the four elevations, placed exactly as you see them on that elevation sheet: from_left = distance from the left end of the house's outline on that sheet, bottom = height above grade. Use the window and door sizes written on plans (e.g. "36\"x84\"" = 36" wide by 84" high) when given; otherwise scale them from the elevation using its written dimensions.
 
 Sourcing (this is shown to the homeowner in black or red):
 - from_plans = true only when the number is written on a drawing or is the plain difference of two written levels or a sum of written chain dimensions.
 - Anything you scaled from the drawing, assumed or inferred is from_plans = false, with a short reason in ref. Never leave a value out: infer a sensible one instead.
-- Read dimension strings exactly (12'-1 1/2" → "12' 1 1/2\\""). Write every length in the requested unit system.`;
+- Read dimension strings exactly (12'-1 1/2" → "12' 1 1/2\\""). Write every length in the requested unit system.
+
+French drawing terms: élévation avant/arrière/gauche/droite = front/back/left/right elevation; plan de toiture = roof plan; niveau = level; plancher = floor; plafond = ceiling; R.D.C. = ground floor; étage = upper floor; sous-sol = basement; sol moyen = average grade; haut/bas du toit = top/bottom of the roof; toit vert = green roof; fenêtre = window; porte = door; porte patio = patio door; porte de garage = garage door; existant = existing; nouveau/ajout = new/addition.`;
 
 function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -139,30 +162,41 @@ export async function generateDraft(opts: {
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content }];
   let answer = await draftCall(client, messages, opts, 'draft');
   let draft = answerToDraft(answer, opts.units);
-  const problems = draftProblems(draft, answer);
-  if (problems.length) {
-    // One correction pass: show Claude what doesn't add up, with the plans still attached.
-    messages.push(
-      { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(answer) }] },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: `Checking your draft against itself found these problems:\n- ${problems.join('\n- ')}\n\nLook at the drawings again, fix these and anything else you now see is off (especially where an elevation shows one continuous wall), and return the complete corrected draft.`,
-          },
-        ],
-      },
-    );
+  // One review pass: draw the draft from every side, put it next to the drawings, and let Claude correct it.
+  const review = reviewContent(draft, draftProblems(draft, answer));
+  if (review.length) {
+    messages.push({ role: 'assistant', content: [{ type: 'text', text: JSON.stringify(answer) }] }, { role: 'user', content: review });
     try {
       answer = await draftCall(client, messages, opts, 'check');
       draft = answerToDraft(answer, opts.units);
     } catch (e) {
       if (opts.signal?.aborted) throw e;
-      // Keep the first draft if the correction fails.
+      // Keep the first draft if the review fails.
     }
   }
   return draft;
+}
+
+const SKETCH_VIEWS: SketchView[] = ['front', 'right', 'back', 'left', 'top'];
+
+/** The review request: the draft drawn from each side, plus any problems found in it. Empty if there is nothing to show. */
+export function reviewContent(draft: ExteriorDraft, problems: string[]): Anthropic.Beta.BetaContentBlockParam[] {
+  const content: Anthropic.Beta.BetaContentBlockParam[] = [];
+  for (const view of SKETCH_VIEWS) {
+    const png = sketchPng(draft, view);
+    if (!png) continue;
+    content.push({ type: 'text', text: SKETCH_TITLES[view] + ':' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } });
+  }
+  if (!content.length && !problems.length) return [];
+  const intro = content.length
+    ? 'Above is your draft drawn back in 2D, one picture per drawing. Compare each picture with its drawing side by side: the outline of every volume, where walls break or run continuous, the wall tops, the roof shape and the height of each roof edge, and every door and window.'
+    : 'Review your draft against the drawings once more.';
+  const issues = problems.length ? `\n\nChecking your draft against itself also found:\n- ${problems.join('\n- ')}` : '';
+  content.push({
+    type: 'text',
+    text: `${intro}${issues}\n\nIn cross_check, list every difference you find between a picture and its drawing and how you fix it in 3D (a fix must keep every other view right). Then return the complete corrected draft. If everything already matches, return the same draft.`,
+  });
+  return content;
 }
 
 async function draftCall(
@@ -215,23 +249,26 @@ export function answerToDraft(a: DraftAnswer, units: UnitSystem): ExteriorDraft 
     return { mm: Math.max(min, mm), source: v.from_plans ? 'plan' : 'ai', ref: v.ref };
   };
   const levels: DraftLevel[] = a.levels.map((l, i) => ({ id: id('lvl', i), name: l.name, elevation: d(l.elevation) }));
-  const blocks: Block[] = a.volumes.map((v, i) => ({
-    id: id('vol', i),
-    name: v.name,
-    x: d(v.x),
-    y: d(v.y),
-    width: d(v.width, 1),
-    depth: d(v.depth, 1),
-    base: d(v.base),
-    height: d(v.wall_height, 1),
-    roof: {
+  const blocks: Block[] = a.volumes.map((v, i) => {
+    const width = d(v.width, 1);
+    const depth = d(v.depth, 1);
+    const rise = d(v.roof.rise, 0);
+    const roof: Roof = {
       type: v.roof.type as RoofType,
-      rise: d(v.roof.rise, 0),
+      rise,
       overhang: d(v.roof.overhang, 0),
       ridge: v.roof.ridge_along === 'width' ? 'x' : 'y',
       low: v.roof.low_side as Face,
-    },
-  }));
+    };
+    if (roof.type === 'folded') {
+      const f = roofFacets(v.roof.facets ?? [], width.mm, rise.mm, depth.mm, (x) => toMm(x, units));
+      if (f) {
+        roof.facets = f.facets;
+        roof.rise = { ...rise, mm: f.rise };
+      } else roof.type = 'flat';
+    }
+    return { id: id('vol', i), name: v.name, x: d(v.x), y: d(v.y), width, depth, base: d(v.base), height: d(v.wall_height, 1), roof };
+  });
   const base = normalize({ summary: a.summary, createdAt: Date.now(), levels, blocks, openings: [] });
   const openings: Opening[] = [];
   a.openings.forEach((o, i) => {

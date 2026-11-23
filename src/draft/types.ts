@@ -23,8 +23,22 @@ export interface Dim {
 
 export type Face = 'front' | 'back' | 'left' | 'right';
 
-/** parapet: a flat-looking roof hidden behind walls that rise all around it, with the roof inside sloping down (a depression). */
-export type RoofType = 'flat' | 'parapet' | 'shed' | 'gable' | 'hip';
+/**
+ * parapet: a flat-looking roof hidden behind walls that rise all around it, with the roof inside sloping down (a depression).
+ * folded: any roof made of flat facets drawn as regions on the roof plan, e.g. a rectangle that dips along valley lines.
+ */
+export type RoofType = 'flat' | 'parapet' | 'shed' | 'gable' | 'hip' | 'folded';
+
+/**
+ * A corner of a folded roof facet, relative to its volume so the shape follows edits:
+ * u across the width (0 = left wall, 1 = right wall), v back from the front (0 = front wall, 1 = back wall),
+ * t up from the top of the walls (0) to the roof's rise (1).
+ */
+export interface RoofPoint {
+  u: number;
+  v: number;
+  t: number;
+}
 
 export interface Roof {
   type: RoofType;
@@ -36,6 +50,8 @@ export interface Roof {
   ridge: 'x' | 'y';
   /** Shed and parapet roofs: the side the roof slopes down to. */
   low: Face;
+  /** Folded roofs: the flat facets, each a polygon of corners in order. */
+  facets?: RoofPoint[][];
 }
 
 /** A box-shaped part of the house: a storey, a wing, a garage. */
@@ -113,6 +129,7 @@ export const ROOF_NAMES: Record<RoofType, string> = {
   shed: 'Shed roof',
   gable: 'Gable roof',
   hip: 'Hip roof',
+  folded: 'Roof with a depression',
 };
 
 export function dim(mm: number, source: Source = 'user', ref?: string): Dim {

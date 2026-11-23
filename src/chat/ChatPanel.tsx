@@ -211,7 +211,7 @@ export function ChatPanel({ project, units, onProjectChange, onClose, plans }: P
                 </p>
                 <ul className="grid list-disc gap-1 pl-5">
                   <li>"On the right elevation, the first floor wall should be one continuous rectangle. Fix it."</li>
-                  <li>"The upper roof is flat with a depression; look at the front elevation."</li>
+                  <li>"The upper roof dips along the lines on the roof plan. Check the left and front elevations."</li>
                   <li>"Where does the 7' 8" hip roof height come from?"</li>
                 </ul>
               </div>
