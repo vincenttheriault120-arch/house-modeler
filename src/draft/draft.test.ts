@@ -135,6 +135,10 @@ describe('exterior draft', () => {
     expect(p.some((x) => /don't land/.test(x))).toBe(true);
     const overlap = { ...d, blocks: [d.blocks[0], { ...d.blocks[0], id: 'copy', name: 'Copy' }] };
     expect(draftProblems(overlap).some((x) => /overlap/.test(x))).toBe(true);
+    // A one-foot overlap where an addition meets the existing house is allowed.
+    const b0 = d.blocks[0];
+    const junction = { ...d, blocks: [b0, { ...b0, id: 'add', name: 'Addition', x: { ...b0.x, mm: b0.x.mm + b0.width.mm - 318 } }] };
+    expect(draftProblems(junction).some((x) => /overlap/.test(x))).toBe(false);
   });
 
   it('draws a roof behind parapets', () => {
