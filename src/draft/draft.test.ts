@@ -35,6 +35,7 @@ const answer: DraftAnswer = {
       roof: { type: 'shed', rise: v("3' 9\""), overhang: v('0"', false), ridge_along: 'depth', low_side: 'left', facets: [] },
     },
   ],
+  foundations: [],
   openings: [
     { elevation: 'front', kind: 'door', from_left: v("15' 9\"", false), bottom: v("2' 7\""), width: v("3' 0\""), height: v("7' 0\"") },
     { elevation: 'front', kind: 'window', from_left: v("100' 0\""), bottom: v('0"'), width: v('1"'), height: v('1"') },
@@ -181,6 +182,62 @@ describe('exterior draft', () => {
     }
     expect(leftWall.length).toBeGreaterThan(0);
     expect(measures(fd).find((m) => m.id.endsWith(':roof.rise'))!.label).toBe('Highest roof edge above the lowest');
+  });
+
+  it('adds a basement and a slab on grade below grade', () => {
+    const fd = answerToDraft(
+      {
+        ...answer,
+        openings: [],
+        foundations: [
+          {
+            name: 'Basement',
+            type: 'basement',
+            x: v('0"'),
+            y: v('0"'),
+            width: v("21' 1 1/2\""),
+            depth: v("26' 1\""),
+            bottom: v("-4' 7\""),
+            top: v('0"'),
+            wall_thickness: v('8"', false),
+            slab_thickness: v('4"', false),
+          },
+          {
+            name: 'Garage slab',
+            type: 'slab-on-grade',
+            x: v("20' 1\""),
+            y: v('0"'),
+            width: v("18' 1\""),
+            depth: v("39' 1 1/2\""),
+            bottom: v("-4' 0\"", false),
+            top: v('4"'),
+            wall_thickness: v('8"', false),
+            slab_thickness: v('4"', false),
+          },
+        ],
+      },
+      'imperial',
+    );
+    const [bsmt, slab] = fd.blocks.filter((b) => b.foundation);
+    expect(bsmt.foundation!.type).toBe('basement');
+    expect(bsmt.base.mm).toBeCloseTo(-(4 * FT + 7 * 25.4));
+    expect(bsmt.height.mm).toBeCloseTo(4 * FT + 7 * 25.4);
+    expect(bsmt.height.source).toBe('plan');
+    expect(slab.foundation!.type).toBe('slab');
+    expect(slab.height.source).toBe('ai');
+    // Foundations show on the foundation plan, not on the floor plans or the roof.
+    const plan = measuresFor(fd, 'basement').map((m) => m.id);
+    expect(plan).toContain(`${bsmt.id}.width`);
+    expect(plan).toContain(`${bsmt.id}:foundation.wall`);
+    expect(measuresFor(fd, 'top').some((m) => m.part === bsmt.id)).toBe(false);
+    expect(blocksOnFloor(fd, 'ground').some((b) => b.foundation)).toBe(false);
+    const mesh = draftMeshes(fd).find((m) => m.part === bsmt.id)!;
+    expect(mesh.kind).toBe('foundation');
+    const zs = mesh.positions.filter((_, i) => i % 3 === 2);
+    expect(Math.min(...zs)).toBeCloseTo(bsmt.base.mm);
+    // Thickness is editable like any other measurement.
+    const edited = setDim(fd, `${bsmt.id}:foundation.wall`, { mm: 254 });
+    expect(edited.blocks.find((b) => b.id === bsmt.id)!.foundation!.wall).toMatchObject({ mm: 254, source: 'user' });
   });
 
   it('removes a volume with its openings', () => {

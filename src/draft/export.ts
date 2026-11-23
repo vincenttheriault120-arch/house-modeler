@@ -12,6 +12,7 @@ export async function exportDraftGlb(draft: ExteriorDraft, projectName: string) 
     wall: new THREE.MeshStandardMaterial({ color: '#f2f0ec', roughness: 1, name: 'Clay walls' }),
     roof: new THREE.MeshStandardMaterial({ color: '#d9d6d0', roughness: 1, name: 'Clay roof' }),
     opening: new THREE.MeshStandardMaterial({ color: '#4b5563', roughness: 0.6, name: 'Openings' }),
+    foundation: new THREE.MeshStandardMaterial({ color: '#b8bbc0', roughness: 1, name: 'Foundations' }),
   };
   for (const m of draftMeshes(draft)) {
     const pos = new Float32Array(m.positions.length);

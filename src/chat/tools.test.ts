@@ -75,6 +75,25 @@ describe('exterior draft tools', () => {
     expect(runTool(base, 'set_draft_values', { changes: [{ id: 'nope', value: '1"' }] }).isError).toBe(true);
   });
 
+  it('adds a foundation below grade', () => {
+    const r = runTool(base, 'add_draft_foundation', {
+      name: 'Basement',
+      type: 'basement',
+      x: '0"',
+      y: '0"',
+      width: `20' 0"`,
+      depth: `26' 0"`,
+      bottom: `-4' 7"`,
+      top: '0"',
+    });
+    expect(r.isError).toBe(false);
+    const f = r.project.exterior!.blocks.find((b) => b.foundation)!;
+    expect(f.base.mm).toBeCloseTo(-(4 * FT + 7 * 25.4));
+    expect(f.foundation).toMatchObject({ type: 'basement', wall: { mm: 203.2 } });
+    expect(describeProject(r.project, 'imperial')).toMatch(/"foundation": "basement"/);
+    expect(runTool(base, 'add_draft_foundation', { name: 'x', type: 'slab-on-grade', x: '0"', y: '0"', width: '1"', depth: '1"', bottom: '1"', top: '0"' }).isError).toBe(true);
+  });
+
   it('gives a volume a roof with a depression', () => {
     expect(runTool(base, 'update_draft_volume', { volume_id: 'main', roof_type: 'folded' }).isError).toBe(true);
     const c = (across: string, back: string, height: string) => ({ across, back, height });

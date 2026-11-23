@@ -26,6 +26,7 @@ const toScene = (p: P3): [number, number, number] => [p.x / 1000, p.z / 1000, -p
 
 const VIEW_AXES: Record<ViewId, { from: [number, number, number]; up: [number, number, number] }> = {
   top: { from: [0, 1, 0], up: [0, 0, -1] },
+  basement: { from: [0, 1, 0], up: [0, 0, -1] },
   ground: { from: [0, 1, 0], up: [0, 0, -1] },
   first: { from: [0, 1, 0], up: [0, 0, -1] },
   front: { from: [0, 0, 1], up: [0, 1, 0] },
@@ -43,6 +44,8 @@ export function DraftViewport({ draft, view, measures, units, dark, activePart, 
       const ids = new Set(blocksOnFloor(draft, view).map((b) => b.id));
       return all.filter((m) => m.kind === 'wall' && ids.has(m.part));
     }
+    // The foundation plan: only the foundations.
+    if (view === 'basement') return all.filter((m) => m.kind === 'foundation');
     return all;
   }, [draft, view]);
   const box = bounds(draft);
@@ -80,7 +83,7 @@ export function DraftViewport({ draft, view, measures, units, dark, activePart, 
         fadeDistance={view === '3d' ? 90 : 400}
         side={THREE.DoubleSide}
         infiniteGrid
-        position={[0, view === 'ground' || view === 'first' || view === 'top' ? -8 : 0, 0]}
+        position={[0, view === 'ground' || view === 'first' || view === 'top' || view === 'basement' ? -8 : 0, 0]}
       />
       {view === '3d' ? (
         <>
@@ -111,6 +114,10 @@ function clay(kind: DraftMesh['kind'], dark: boolean, active: boolean) {
           ? dark
             ? '#a29f99'
             : '#efede9'
+          : kind === 'foundation'
+            ? dark
+              ? '#7d838c'
+              : '#c9ccd1'
           : dark
             ? '#b9b6b0'
             : '#ffffff';
@@ -156,6 +163,7 @@ const SCREEN: Record<ViewId, { right: P3; up: P3 }> = {
   left: { right: { x: 0, y: -1, z: 0 }, up: { x: 0, y: 0, z: 1 } },
   right: { right: { x: 0, y: 1, z: 0 }, up: { x: 0, y: 0, z: 1 } },
   top: { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 } },
+  basement: { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 } },
   ground: { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 } },
   first: { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 } },
 };
@@ -189,7 +197,7 @@ function FlatCamera({ view, draft, measures }: { view: ViewId; draft: ExteriorDr
     const v1 = Math.max(...vs) + 900;
     const cu = (u0 + u1) / 2;
     const cv = (v0 + v1) / 2;
-    const flat = view === 'top' || view === 'ground' || view === 'first';
+    const flat = view === 'top' || view === 'ground' || view === 'first' || view === 'basement';
     const c: P3 = {
       x: ax.right.x * cu + ax.up.x * cv,
       y: ax.right.y * cu + ax.up.y * cv,

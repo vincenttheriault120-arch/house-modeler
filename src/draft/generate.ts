@@ -63,6 +63,24 @@ export const DraftSchema = z.object({
       }),
     )
     .describe('The house as non-overlapping boxes, bottom to top. Split it wherever the outline, height or roof changes (an addition, a garage, an upper storey that cantilevers).'),
+  foundations: z
+    .array(
+      z.object({
+        name: z.string().describe('e.g. "Basement under the original house", "Garage slab on grade".'),
+        type: z.enum(['basement', 'slab-on-grade']),
+        x: Value.describe("Left outside face of the foundation walls, from the house's leftmost outside wall (same frame as the volumes)."),
+        y: Value.describe("Front outside face, back from the house's frontmost outside wall."),
+        width: Value.describe('Outside width of the foundation walls, left to right.'),
+        depth: Value.describe('Outside depth of the foundation walls, front to back.'),
+        bottom: Value.describe(
+          'Bottom of the foundation walls (top of the footings) relative to grade, usually NEGATIVE. Basement: the basement slab level. Slab on grade: the bottom of the frost wall.',
+        ),
+        top: Value.describe('Top of the foundation walls relative to grade, where the volume above starts. Slab on grade: the top of the slab.'),
+        wall_thickness: Value.describe('Foundation wall thickness (e.g. 8" or 10").'),
+        slab_thickness: Value.describe('Concrete slab thickness (e.g. 4").'),
+      }),
+    )
+    .describe('Every foundation below the house: a basement, a crawl space (as a basement), or a slab on grade with its frost wall. Empty only if the drawings show none.'),
   openings: z
     .array(
       z.object({
@@ -103,6 +121,13 @@ How to work, in this order:
 3. Cross-check every volume on EVERY view where it shows: its width on the front and back elevations, its depth on the left and right elevations, its outline on the roof plan, and its wall tops on all four elevations. Where an elevation draws one continuous wall (one rectangle, one cladding), the volumes behind it must line up exactly there (same x or y edge, same top). Fix the numbers until every view's outline matches its drawing.
 4. Roofs, in 3D. The roof plan (plan de toiture) gives the shape from above: its outline, the lines inside it (ridges, hips, valleys, folds), slope arrows (they point DOWNHILL), and small circles (drains, at the LOW points). The elevations give heights: the levels written beside them (e.g. "niveau haut du toit" = roof top, "niveau bas du toit" = low roof), and the roof's edge on each side (flat at one level, or sloping from one level to another). Combine them: each region between lines on the roof plan is one flat facet; the height of each of its corners comes from the elevations where that corner shows; check that every arrow points downhill on your facets and the drains sit at the bottom. Then check the result on every elevation: a wall whose top slopes on a side elevation means the roof edge on that side slopes; a roof surface drawn (hatched or stippled) above a wall on an elevation means the roof rises behind that wall.
 5. Pick the roof type: hip and gable as usual; shed for one plane with the walls following it; parapet for flat-topped walls all around with one plane hidden inside; folded for anything made of several facets that is not a plain hip or gable (for example a rectangle whose edges are high on some sides and that dips along valley lines toward drains). For folded, wall_height runs to the LOWEST roof edge and rise to the HIGHEST.
+
+Foundations (below grade), in foundations: read them from the basement / foundation plan (plan du sous-sol, fondation), the sections (coupe longitudinale / transversale) and the dashed lines below the grade line on the elevations.
+- One foundation per part with its own footprint or type, e.g. a basement under the original house and a slab on grade under an addition or garage. Footprints use the outside face of the foundation walls, in the same x/y frame as the volumes; they usually match the walls above.
+- basement: bottom = the basement slab level (niv. dalle du sous-sol), top = the top of the foundation wall where the house above starts.
+- slab-on-grade: top = top of the slab (e.g. a garage floor a few inches above grade), bottom = bottom of the perimeter frost wall (top of its footing). If the depth is not written, scale it from the sections and say so.
+- Wall and slab thickness from the plans and sections (thick grey or hatched walls); otherwise infer typical values (8" walls, 4" slab) and say so.
+- The volumes above start at the top of their foundation: a volume's base and its foundation's top are the same height, and they must not overlap.
 
 Openings: list every door, window, patio door and garage door visible on the four elevations, placed exactly as you see them on that elevation sheet: from_left = distance from the left end of the house's outline on that sheet, bottom = height above grade. Use the window and door sizes written on plans (e.g. "36\"x84\"" = 36" wide by 84" high) when given; otherwise scale them from the elevation using its written dimensions.
 
@@ -267,6 +292,23 @@ export function answerToDraft(a: DraftAnswer, units: UnitSystem): ExteriorDraft 
       } else roof.type = 'flat';
     }
     return { id: id('vol', i), name: v.name, x: d(v.x), y: d(v.y), width, depth, base: d(v.base), height: d(v.wall_height, 1), roof };
+  });
+  (a.foundations ?? []).forEach((f, i) => {
+    const bottom = d(f.bottom);
+    const topD = d(f.top);
+    const both = bottom.source === 'plan' && topD.source === 'plan';
+    blocks.push({
+      id: id('fnd', i),
+      name: f.name,
+      x: d(f.x),
+      y: d(f.y),
+      width: d(f.width, 1),
+      depth: d(f.depth, 1),
+      base: bottom,
+      height: { mm: Math.max(1, topD.mm - bottom.mm), source: both ? 'plan' : 'ai', ref: `From ${bottom.ref ?? 'bottom'} to ${topD.ref ?? 'top'}` },
+      roof: { type: 'flat', rise: { mm: 0, source: 'ai' }, overhang: { mm: 0, source: 'ai' }, ridge: 'x', low: 'left' },
+      foundation: { type: f.type === 'basement' ? 'basement' : 'slab', wall: d(f.wall_thickness, 1), slab: d(f.slab_thickness, 1) },
+    });
   });
   const base = normalize({ summary: a.summary, createdAt: Date.now(), levels, blocks, openings: [] });
   const openings: Opening[] = [];
