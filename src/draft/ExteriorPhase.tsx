@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Check, ChevronDown, ChevronRight, FileText, Loader2, Plus, RefreshCw, Sparkles, SquareSplitHorizontal, Trash2, Undo2 } from 'lucide-react';
+import { Box, Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, Loader2, Plus, RefreshCw, Sparkles, SquareSplitHorizontal, Trash2, Undo2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import { DraftViewport, sourceClass, type ModelView } from './DraftViewport';
 import { draftFromSteps } from './fromSteps';
 import { generateDraft } from './generate';
 import { PdfPane } from './PdfPane';
+import { parseAnswerSheet, scoreDraft, type AnswerSheet, type Score, type Verdict } from './score';
 import { confirmView, faceFrame, measures as allMeasures, measuresFor, progress, removePart, setDim, viewProgress, type Measure } from './model';
 import { dim, VIEWS, type ExteriorDraft, type Face, type OpeningKind, type ViewId } from './types';
 
@@ -61,6 +62,28 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
   const abort = useRef<AbortController | null>(null);
   const planInput = useRef<HTMLInputElement>(null);
   const [, tick] = useState(0);
+  const [answerSheet, setAnswerSheet] = useState<AnswerSheet | null>(() => loadAnswerSheet(project.name));
+  const [scoreOpen, setScoreOpen] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const sheetInput = useRef<HTMLInputElement>(null);
+  const score = useMemo(
+    () => (draft && answerSheet ? scoreDraft(draft, answerSheet, (mm) => formatLength(mm, units)) : null),
+    [draft, answerSheet, units],
+  );
+
+  async function pickAnswerSheet(file: File | undefined) {
+    if (!file) return;
+    try {
+      const s = parseAnswerSheet(await file.text());
+      saveAnswerSheet(project.name, s);
+      setAnswerSheet(s);
+      setScoreError(null);
+      setScoreOpen(true);
+    } catch (e) {
+      setScoreError(e instanceof Error ? e.message : String(e));
+      setScoreOpen(true);
+    }
+  }
 
   // Show the elapsed time while Claude drafts.
   useEffect(() => {
@@ -89,6 +112,7 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
       onDraft(d);
       setPlansOpen(false);
       setView('3d');
+      if (answerSheet) setScoreOpen(true);
     } catch (e) {
       if (!ctl.signal.aborted) setGenError(explainError(e));
     } finally {
@@ -234,6 +258,22 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
                 ))}
               </div>
               <div className="flex-1" />
+              <input
+                ref={sheetInput}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => (pickAnswerSheet(e.target.files?.[0]), (e.target.value = ''))}
+              />
+              <Button
+                size="sm"
+                variant={scoreOpen ? 'default' : 'ghost'}
+                aria-pressed={scoreOpen}
+                title="Compare this draft with an answer sheet of values confirmed from your plans"
+                onClick={() => (answerSheet || scoreOpen ? setScoreOpen((o) => !o) : sheetInput.current?.click())}
+              >
+                <ClipboardCheck /> Score{score && ` ${score.counts.right}/${score.rows.length}`}
+              </Button>
               {view !== '3d' && (
                 <Button size="sm" variant={beside ? 'default' : 'outline'} aria-pressed={beside} onClick={() => setBeside((b) => !b)}>
                   <SquareSplitHorizontal /> Plan beside
@@ -280,6 +320,19 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
                     setActivePart(ms.find((m) => m.id === id)?.part ?? null);
                   }}
                 />
+                {scoreOpen && (
+                  <ScorePanel
+                    score={score}
+                    error={scoreError}
+                    onLoad={() => sheetInput.current?.click()}
+                    onForget={() => {
+                      saveAnswerSheet(project.name, null);
+                      setAnswerSheet(null);
+                      setScoreOpen(false);
+                    }}
+                    onClose={() => setScoreOpen(false)}
+                  />
+                )}
                 <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-background/85 px-2 py-0.5 text-xs text-muted-foreground shadow-sm">
                   {view === '3d' ? 'Drag: rotate · Right-drag: pan · Scroll: zoom · Click a number to check it' : 'Drag: pan · Scroll: zoom · Click a number to check it'}
                 </span>
@@ -726,5 +779,107 @@ function AddOpening({ draft, face, onAdd }: { draft: ExteriorDraft; face: Face; 
         </Button>
       </div>
     </div>
+  );
+}
+
+const SHEET_KEY = 'house-modeler:answer-sheet:';
+
+function loadAnswerSheet(projectName: string): AnswerSheet | null {
+  try {
+    const raw = localStorage.getItem(SHEET_KEY + projectName);
+    return raw ? parseAnswerSheet(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAnswerSheet(projectName: string, sheet: AnswerSheet | null) {
+  try {
+    if (sheet) localStorage.setItem(SHEET_KEY + projectName, JSON.stringify(sheet));
+    else localStorage.removeItem(SHEET_KEY + projectName);
+  } catch {
+    // Storage full or blocked: the score still shows for this session.
+  }
+}
+
+const VERDICT_STYLE: Record<Verdict, string> = {
+  right: 'text-success',
+  close: 'text-amber-600',
+  wrong: 'text-red-600',
+  missing: 'text-red-600',
+};
+
+/** How the draft compares with the answer sheet, part by part. */
+function ScorePanel(props: { score: Score | null; error: string | null; onLoad: () => void; onForget: () => void; onClose: () => void }) {
+  const { score } = props;
+  const parts = useMemo(() => {
+    const g = new Map<string, NonNullable<typeof score>['rows']>();
+    for (const r of score?.rows ?? []) {
+      if (!g.has(r.part)) g.set(r.part, []);
+      g.get(r.part)!.push(r);
+    }
+    return [...g.entries()];
+  }, [score]);
+  return (
+    <section
+      aria-label="Score against the answer sheet"
+      className="absolute top-2 right-2 z-30 flex max-h-[calc(100%-1rem)] w-[min(26rem,calc(100%-1rem))] flex-col rounded-lg border bg-background shadow-lg"
+    >
+      <div className="flex items-start gap-2 border-b p-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold">{score ? `Score against ${score.sheet}` : 'Score against an answer sheet'}</h2>
+          {score && (
+            <p className="text-xs text-muted-foreground tabular-nums">
+              <span className={VERDICT_STYLE.right}>{score.counts.right} right</span> ·{' '}
+              <span className={VERDICT_STYLE.close}>{score.counts.close} close</span> ·{' '}
+              <span className={VERDICT_STYLE.wrong}>{score.counts.wrong} wrong</span> ·{' '}
+              <span className={VERDICT_STYLE.missing}>{score.counts.missing} missing</span>
+            </p>
+          )}
+          {score && <p className="text-xs text-muted-foreground">Each row shows your plans, then this draft.</p>}
+        </div>
+        <Button variant="ghost" size="icon" className="size-7" aria-label="Close score" onClick={props.onClose}>
+          <X />
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 text-xs">
+        {props.error && <p className="mb-2 text-destructive">{props.error}</p>}
+        {!score && !props.error && (
+          <p className="text-muted-foreground">
+            Load an answer sheet: a JSON file of values you confirmed from your plans. The draft is scored against it after every Redraft.
+          </p>
+        )}
+        {parts.map(([part, rows]) => (
+          <div key={part} className="mb-3">
+            <h3 className="mb-1 font-medium">{part}</h3>
+            <table className="w-full tabular-nums">
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-t first:border-t-0">
+                    <td className="py-0.5 pr-2">{r.label}</td>
+                    <td className="py-0.5 pr-2 text-right text-muted-foreground">{r.expected}</td>
+                    <td className="py-0.5 pr-2 text-right">{r.got}</td>
+                    <td className={cn('py-0.5 text-right font-medium', VERDICT_STYLE[r.verdict])}>{r.verdict}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+        {score && score.extra.length > 0 && (
+          <p className="text-muted-foreground">Drafted but not on the answer sheet: {score.extra.join(', ')}.</p>
+        )}
+      </div>
+      <div className="flex gap-2 border-t p-2">
+        <Button size="sm" variant="outline" onClick={props.onLoad}>
+          {score ? 'Load another sheet' : 'Load answer sheet'}
+        </Button>
+        {score && (
+          <Button size="sm" variant="ghost" onClick={props.onForget}>
+            Forget sheet
+          </Button>
+        )}
+      </div>
+    </section>
   );
 }
