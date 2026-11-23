@@ -9,6 +9,7 @@ export { draftProblems, placeOpening };
 import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind, Roof, RoofType } from './types';
 import { SKETCH_TITLES, sketchPng, type SketchView } from './sketch';
 import { PLAN_READING } from './reading';
+import { measurePlans } from '../plans/measurePdf';
 
 const Value = z.object({
   value: z.string().describe('Length with units, e.g. "20\' 1\\"", "10\' 5\\"", "6 1/4\\"" or "2400 mm".'),
@@ -154,7 +155,7 @@ The parts list runs from the roof down to the bottom of the foundations, with ev
 
 Volumes:
 - Outside wall faces. Split into separate boxes where the footprint, the height or the roof changes. A storey that overhangs (cantilevers) or is set back from the one below is its own box, with its base at its floor level.
-- Boxes must not overlap. A two-storey part under one roof is ONE box from its bottom to the top of its upper walls. ONE roof outline over ONE continuous set of walls is ONE volume. Rooms, interior walls and changes of use (garage, living room, bedroom) are not reasons to split.
+- Boxes must not overlap, except where the plans themselves show two parts overlapping at a junction (e.g. an addition built against an existing wall, its dimensions starting inside the other part): there, keep each part's true outside size from its own written dimensions rather than trimming one. A two-storey part under one roof is ONE box from its bottom to the top of its upper walls. ONE roof outline over ONE continuous set of walls is ONE volume. Rooms, interior walls and changes of use (garage, living room, bedroom) are not reasons to split.
 - Decks, steps, terraces and small canopies are not volumes. Foundations go in the foundations list, not in volumes.
 - Roof types: hip and gable as usual; shed = one plane, the walls following it; parapet = flat-topped walls all around with one plane hidden inside; folded = any roof made of several flat facets that is not a plain hip or gable (give each facet's corners). For shed, parapet and folded roofs, wall_height runs to the LOWEST roof edge and rise to the HIGHEST point.
 
@@ -185,7 +186,9 @@ function toBase64(buf: ArrayBuffer): string {
   return btoa(s);
 }
 
-/** Ask Claude to draft the exterior from all the plans at once. */
+/** Introduces the heights the app measured from the drawings' lines. */
+export const MEASURED_INTRO = `Measured from the drawings' lines: the app read the exact position of every line on these sheets and measured heights with each sheet's own written levels as the ruler. These are not written values, but they are exact to about an inch, far better than judging by eye. Use them for heights that are not written (roof peaks, ridges, wall tops, eaves): match each to the edge you see on the drawing, convert from the drawing's level system to above grade with the datum, and mark them from_plans = false with ref "measured from the lines of <sheet>". A written value still wins over a measured one.`;
+
 /** The plan PDFs as document blocks, the last one marked for caching so follow-up calls reuse them. */
 export async function planDocumentBlocks(plans: PlanMeta[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
@@ -214,6 +217,8 @@ export async function generateDraft(opts: {
 }): Promise<ExteriorDraft> {
   const content = await planDocumentBlocks(opts.plans);
   if (content.length === 0) throw new Error('No plan PDFs could be read from this project.');
+  const measured = await measurePlans(opts.plans);
+  if (measured) content.push({ type: 'text', text: `${MEASURED_INTRO}\n\n${measured}` });
   content.push({ type: 'text', text: `Units: ${opts.units === 'imperial' ? 'feet-inches' : 'millimetres'}.\n\n${INVENTORY_ASK}` });
   const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content }];

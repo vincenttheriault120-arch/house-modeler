@@ -746,7 +746,8 @@ export function draftProblems(draft: ExteriorDraft, answer?: { openings: unknown
       const ox = Math.min(a.x.mm + a.width.mm, b.x.mm + b.width.mm) - Math.max(a.x.mm, b.x.mm);
       const oy = Math.min(a.y.mm + a.depth.mm, b.y.mm + b.depth.mm) - Math.max(a.y.mm, b.y.mm);
       const oz = Math.min(top(a), top(b)) - Math.max(a.base.mm, b.base.mm);
-      if (ox > 100 && oy > 100 && oz > 100) out.push(`Volumes "${a.name}" and "${b.name}" overlap. Split them so they only touch.`);
+      // A narrow overlap where two parts meet (an addition built against an existing wall) is what the plans show.
+      if (Math.min(ox, oy) > 600 && oz > 100) out.push(`Volumes "${a.name}" and "${b.name}" overlap by more than a wall junction. Split them so they only touch.`);
     }
   for (const o of draft.openings) {
     const b = bs.find((x) => x.id === o.blockId);
