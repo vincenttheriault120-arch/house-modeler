@@ -120,6 +120,15 @@ export interface ExteriorDraft {
   openings: Opening[];
   /** Views the person has finished checking. */
   done?: Partial<Record<ViewId, boolean>>;
+  /** Where the drawings disagree, as Claude found them, and the value it used. */
+  conflicts?: PlanConflict[];
+}
+
+export interface PlanConflict {
+  about: string;
+  /** Each value as written, with its sheet. */
+  values: string[];
+  used: string;
 }
 
 export const VIEWS: { id: ViewId; name: string; plan: string[] }[] = [

@@ -13,11 +13,11 @@ import { PLAN_KINDS, type PlanMeta } from '../plans/store';
 import { formatLength, type UnitSystem } from '../units';
 import { DraftViewport, sourceClass, type ModelView } from './DraftViewport';
 import { draftFromSteps } from './fromSteps';
-import { generateDraft } from './generate';
+import { generateDraft, type DraftStage } from './generate';
 import { PdfPane } from './PdfPane';
 import { parseAnswerSheet, scoreDraft, type AnswerSheet, type Score, type Verdict } from './score';
 import { confirmView, faceFrame, measures as allMeasures, measuresFor, progress, removePart, setDim, viewProgress, type Measure } from './model';
-import { dim, VIEWS, type ExteriorDraft, type Face, type OpeningKind, type ViewId } from './types';
+import { dim, VIEWS, type ExteriorDraft, type Face, type OpeningKind, type PlanConflict, type ViewId } from './types';
 
 interface PlansApi {
   plans: PlanMeta[];
@@ -56,7 +56,7 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
   const [activePart, setActivePart] = useState<string | null>(null);
   const [activeMeasure, setActiveMeasure] = useState<string | null>(null);
   const [plansOpen, setPlansOpen] = useState(!draft);
-  const [gen, setGen] = useState<{ started: number; chars: number; stage?: 'draft' | 'check' } | null>(null);
+  const [gen, setGen] = useState<{ started: number; chars: number; stage?: DraftStage } | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [undo, setUndo] = useState<ExteriorDraft | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -447,7 +447,7 @@ function DraftStart(props: {
   project: Project;
   plans: PlanMeta[];
   labeling: boolean;
-  gen: { started: number; chars: number; stage?: 'draft' | 'check' } | null;
+  gen: { started: number; chars: number; stage?: DraftStage } | null;
   error: string | null;
   onDraft: () => void;
   onCancel: () => void;
@@ -472,7 +472,11 @@ function DraftStart(props: {
           <div className="grid gap-2">
             <div className="flex items-center gap-2 text-sm">
               <Loader2 className="size-4 animate-spin text-primary" />
-              {props.gen.stage === 'check' ? 'Claude is double-checking its draft against the drawings…' : `Claude is reading ${props.plans.length} sheets…`} {secs}s
+              {props.gen.stage === 'check'
+                ? 'Claude is double-checking its draft against the drawings…'
+                : props.gen.stage === 'draft'
+                  ? 'Claude is drafting each part and checking it on every sheet…'
+                  : `Claude is taking stock of ${props.plans.length} sheets and every part of the house…`} {secs}s
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-muted">
               <div className="h-full animate-pulse rounded-full bg-primary transition-all" style={{ width: `${Math.min(95, 8 + secs / 1.8)}%` }} />
@@ -588,6 +592,7 @@ function CheckPanel({
         {view === '3d' ? (
           <>
             <p className="text-xs leading-relaxed text-muted-foreground">{draft.summary}</p>
+            {draft.conflicts && draft.conflicts.length > 0 && <PlansDisagree conflicts={draft.conflicts} />}
             <p className="text-xs text-muted-foreground">
               {all.ok} of {all.total} measurements checked · <span className="text-red-600">{all.ai} inferred</span>. Pick a drawing on the left to check it
               against your plan.
@@ -881,5 +886,27 @@ function ScorePanel(props: { score: Score | null; error: string | null; onLoad: 
         )}
       </div>
     </section>
+  );
+}
+
+/** Where the drawings gave different values for the same thing, and which one the draft uses. */
+function PlansDisagree({ conflicts }: { conflicts: PlanConflict[] }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-xs dark:border-amber-800 dark:bg-amber-950/30">
+      <button type="button" className="flex w-full items-center gap-1 text-left font-medium" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        Plans disagree ({conflicts.length})
+      </button>
+      {open && (
+        <ul className="mt-1 grid gap-1.5">
+          {conflicts.map((c, i) => (
+            <li key={i}>
+              <span className="font-medium">{c.about}:</span> {c.values.join(' · ')}. <span className="text-muted-foreground">Used {c.used}.</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

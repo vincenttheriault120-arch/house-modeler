@@ -65,6 +65,17 @@ describe('scoring a draft against an answer sheet', () => {
     expect(s.counts.missing).toBe(1);
   });
 
+  it('scores a part drafted in several boxes as their outside box', () => {
+    const split: ExteriorDraft = {
+      ...draft,
+      blocks: [block('Wing front', 6439, 0, 5194, 7950, 0, 3277), block('Wing back', 6121, 7950, 5512, 4229, 0, 3277)],
+    };
+    const r = scoreDraft(split, { name: 't', parts: [{ id: 'wing', name: 'Addition', kind: 'volume', x: 6121, y: 0, width: 5512, depth: 12179, top: 3277 }] });
+    expect(r.rows.every((x) => x.verdict === 'right')).toBe(true);
+    expect(r.rows[0].part).toContain('Wing front" + "Wing back');
+    expect(r.extra).toEqual([]);
+  });
+
   it('rejects files that are not answer sheets', () => {
     expect(() => parseAnswerSheet('nope')).toThrow(/not valid JSON/);
     expect(() => parseAnswerSheet('{"parts":[{"id":"a"}]}')).toThrow(/kind/);
