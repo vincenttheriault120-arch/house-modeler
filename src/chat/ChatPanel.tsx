@@ -9,6 +9,8 @@ import type { Project } from '../model/types';
 import type { UnitSystem } from '../units';
 import { explainError, runTurn, type ChatMessage } from './claude';
 import { forgetApiKey, loadApiKey, saveApiKey } from './apiKey';
+import { planDocumentBlocks } from '../draft/generate';
+import type { PlanMeta } from '../plans/store';
 
 interface Entry {
   role: 'user' | 'assistant';
@@ -21,6 +23,11 @@ interface Entry {
 }
 
 const TOOL_LABELS: Record<string, string> = {
+  set_draft_values: 'Changed measurements of the draft',
+  update_draft_volume: 'Changed a volume of the draft',
+  add_draft_volume: 'Added a volume to the draft',
+  add_draft_opening: 'Added a door or window',
+  remove_draft_part: 'Removed a part of the draft',
   add_foundation_step: 'Added a foundation step',
   update_foundation_step: 'Changed foundation measurements',
   update_step_info: 'Updated step details',
@@ -32,9 +39,11 @@ interface Props {
   units: UnitSystem;
   onProjectChange: (p: Project) => void;
   onClose: () => void;
+  /** The project's plan PDFs, which Claude reads with the first message. */
+  plans?: PlanMeta[];
 }
 
-export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
+export function ChatPanel({ project, units, onProjectChange, onClose, plans }: Props) {
   const [apiKey, setApiKey] = useState(loadApiKey);
   const [keyDraft, setKeyDraft] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -94,6 +103,7 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
           onToolUse: (name) => updateLast((e) => ({ ...e, actions: [...e.actions, TOOL_LABELS[name] ?? name] })),
         },
         abort.current.signal,
+        plans?.length ? () => planDocumentBlocks(plans) : undefined,
       );
       setHistory(next);
     } catch (e) {
@@ -195,11 +205,14 @@ export function ChatPanel({ project, units, onProjectChange, onClose }: Props) {
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-3" ref={scroller}>
             {entries.length === 0 && (
               <div className="text-sm text-muted-foreground">
-                <p className="mb-2">Describe a change and Claude will make it. For example:</p>
+                <p className="mb-2">
+                  Claude sees your exterior draft{plans?.length ? ` and your ${plans.length} plan sheets` : ''}. Describe a change and it makes it. For
+                  example:
+                </p>
                 <ul className="grid list-disc gap-1 pl-5">
-                  <li>"Make the garage a slab on grade, 18' 1" by 39' 1 1/2", starting 20' 1" to the right."</li>
-                  <li>"Change the basement walls to 10" thick."</li>
-                  <li>"What's the top elevation of the basement slab?"</li>
+                  <li>"On the right elevation, the first floor wall should be one continuous rectangle. Fix it."</li>
+                  <li>"The upper roof is flat with a depression; look at the front elevation."</li>
+                  <li>"Where does the 7' 8" hip roof height come from?"</li>
                 </ul>
               </div>
             )}

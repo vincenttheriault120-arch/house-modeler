@@ -283,7 +283,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           onDraft={(draft) => dispatch({ type: 'set-exterior', draft })}
         />
           {chatOpen && (
-            <ChatPanel project={project} units={units} onProjectChange={(p) => dispatch({ type: 'replace', project: p })} onClose={() => setChatOpen(false)} />
+            <ChatPanel project={project} units={units} plans={plans.plans} onProjectChange={(p) => dispatch({ type: 'replace', project: p })} onClose={() => setChatOpen(false)} />
           )}
         </div>
       ) : phase === 2 ? (
@@ -494,6 +494,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           <ChatPanel
             project={project}
             units={units}
+            plans={plans.plans}
             onProjectChange={(p) => dispatch({ type: 'replace', project: p })}
             onClose={() => setChatOpen(false)}
           />

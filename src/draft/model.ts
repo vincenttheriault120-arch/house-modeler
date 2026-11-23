@@ -237,13 +237,13 @@ export function measures(draft: ExteriorDraft): Measure[] {
     const rname = `${ROOF_NAMES[r.type]} · ${b.name}`;
     if (r.type !== 'flat') {
       let rx = (x0 + x1) / 2;
-      if (r.type === 'shed') rx = r.low === 'left' ? x1 : r.low === 'right' ? x0 : rx;
+      if (r.type === 'shed' || r.type === 'parapet') rx = r.low === 'left' ? x1 : r.low === 'right' ? x0 : rx;
       const ry = y0 - r.overhang.mm - 150;
       out.push({
         id: `${rp}.rise`,
         part: rp,
         partName: rname,
-        label: r.type === 'shed' ? 'Rise to the high side' : 'Rise to the ridge',
+        label: r.type === 'shed' ? 'Rise to the high side' : r.type === 'parapet' ? 'Parapet top above the low roof' : 'Rise to the ridge',
         dim: r.rise,
         views: ELEVATIONS,
         a: { x: rx, y: ry, z: zt },
@@ -427,6 +427,23 @@ export function roofTriangles(b: Block): number[] {
   const out: number[] = [];
   const p = (x: number, y: number, zz: number) => ({ x, y, z: zz });
   if (r.type === 'flat' || h < 1) return boxTriangles(x0, y0, z, x1, y1, z + Math.max(h, 200));
+  if (r.type === 'parapet') {
+    // The roof inside slopes like a shed roof; the walls rise all around to its high side.
+    const inner: Block = { ...b, roof: { ...r, type: 'shed', overhang: { ...r.overhang, mm: 0 } } };
+    const t = 150;
+    const zt = z + h;
+    const bx0 = b.x.mm;
+    const bx1 = bx0 + b.width.mm;
+    const by0 = b.y.mm;
+    const by1 = by0 + b.depth.mm;
+    return [
+      ...roofTriangles(inner),
+      ...boxTriangles(bx0, by0, z, bx1, by0 + t, zt),
+      ...boxTriangles(bx0, by1 - t, z, bx1, by1, zt),
+      ...boxTriangles(bx0, by0, z, bx0 + t, by1, zt),
+      ...boxTriangles(bx1 - t, by0, z, bx1, by1, zt),
+    ];
+  }
   if (r.type === 'shed') {
     // Corner heights: the low side stays at the wall top.
     const hz = (x: number, y: number) => {
@@ -511,3 +528,65 @@ export function draftMeshes(draft: ExteriorDraft): DraftMesh[] {
 export function levelsSorted(levels: DraftLevel[]) {
   return [...levels].sort((a, b) => a.elevation.mm - b.elevation.mm);
 }
+
+/**
+ * Where an opening seen on an elevation lands: the wall nearest the viewer
+ * at that spot, and its position along and up that wall.
+ */
+export function placeOpening(draft: ExteriorDraft, face: Face, fromLeft: number, bottom: number, width: number) {
+  if (!draft.blocks.length) return null;
+  const box = bounds(draft);
+  const house = { x: { mm: box.x0 }, y: { mm: box.y0 }, width: { mm: box.x1 - box.x0 }, depth: { mm: box.y1 - box.y0 } } as Block;
+  const hf = faceFrame(house, face);
+  const along = fromLeft + width / 2;
+  const cx = hf.start.x + hf.dir.x * along;
+  const cy = hf.start.y + hf.dir.y * along;
+  // How far each block's face is toward the viewer on this side.
+  const nearness = (b: Block) => {
+    const f = faceFrame(b, face);
+    return f.start.x * f.out.x + f.start.y * f.out.y;
+  };
+  const covers = (b: Block) =>
+    face === 'front' || face === 'back' ? cx >= b.x.mm - 1 && cx <= b.x.mm + b.width.mm + 1 : cy >= b.y.mm - 1 && cy <= b.y.mm + b.depth.mm + 1;
+  const zIn = (b: Block) => bottom >= b.base.mm - 150 && bottom < top(b);
+  const pool = draft.blocks.filter(covers);
+  if (!pool.length) return null;
+  const inZ = pool.filter(zIn);
+  const list = inZ.length ? inZ : pool;
+  const b = list.reduce((best, x) => (nearness(x) > nearness(best) ? x : best));
+  const f = faceFrame(b, face);
+  const lx = hf.start.x + hf.dir.x * fromLeft;
+  const ly = hf.start.y + hf.dir.y * fromLeft;
+  const offset = (lx - f.start.x) * f.dir.x + (ly - f.start.y) * f.dir.y;
+  return { blockId: b.id, offset: Math.max(0, offset), sill: Math.max(0, bottom - b.base.mm) };
+}
+
+/** Things in a draft that can't be right, in words Claude can act on. */
+export function draftProblems(draft: ExteriorDraft, answer?: { openings: unknown[] }): string[] {
+  const out: string[] = [];
+  const bs = draft.blocks;
+  for (let i = 0; i < bs.length; i++)
+    for (let j = i + 1; j < bs.length; j++) {
+      const a = bs[i];
+      const b = bs[j];
+      const ox = Math.min(a.x.mm + a.width.mm, b.x.mm + b.width.mm) - Math.max(a.x.mm, b.x.mm);
+      const oy = Math.min(a.y.mm + a.depth.mm, b.y.mm + b.depth.mm) - Math.max(a.y.mm, b.y.mm);
+      const oz = Math.min(top(a), top(b)) - Math.max(a.base.mm, b.base.mm);
+      if (ox > 100 && oy > 100 && oz > 100) out.push(`Volumes "${a.name}" and "${b.name}" overlap. Split them so they only touch.`);
+    }
+  for (const o of draft.openings) {
+    const b = bs.find((x) => x.id === o.blockId);
+    if (!b) continue;
+    const len = faceFrame(b, o.face).length;
+    const name = `${o.kind} on the ${o.face} elevation`;
+    if (o.offset.mm + o.width.mm > len + 50) out.push(`A ${name} runs past the end of the "${b.name}" wall it sits in.`);
+    if (o.sill.mm + o.height.mm > b.height.mm + (b.roof.type === 'flat' ? 0 : b.roof.rise.mm) + 50)
+      out.push(`A ${name} goes above the top of the "${b.name}" wall it sits in.`);
+  }
+  if (answer) {
+    const placed = draft.openings.length;
+    if (placed < answer.openings.length) out.push(`${answer.openings.length - placed} openings don't land on any wall of the drafted volumes.`);
+  }
+  return out;
+}
+

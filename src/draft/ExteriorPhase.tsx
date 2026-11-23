@@ -55,7 +55,7 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
   const [activePart, setActivePart] = useState<string | null>(null);
   const [activeMeasure, setActiveMeasure] = useState<string | null>(null);
   const [plansOpen, setPlansOpen] = useState(!draft);
-  const [gen, setGen] = useState<{ started: number; chars: number } | null>(null);
+  const [gen, setGen] = useState<{ started: number; chars: number; stage?: 'draft' | 'check' } | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [undo, setUndo] = useState<ExteriorDraft | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -83,7 +83,7 @@ export function ExteriorPhase({ project, plans, units, dark, onDraft, autoDraft 
         plans: plans.plans,
         units,
         signal: ctl.signal,
-        onProgress: (chars) => setGen((g) => (g ? { ...g, chars } : g)),
+        onProgress: (chars, stage) => setGen((g) => (g ? { ...g, chars, stage } : g)),
       });
       if (draft) setUndo(draft);
       onDraft(d);
@@ -394,7 +394,7 @@ function DraftStart(props: {
   project: Project;
   plans: PlanMeta[];
   labeling: boolean;
-  gen: { started: number; chars: number } | null;
+  gen: { started: number; chars: number; stage?: 'draft' | 'check' } | null;
   error: string | null;
   onDraft: () => void;
   onCancel: () => void;
@@ -419,12 +419,12 @@ function DraftStart(props: {
           <div className="grid gap-2">
             <div className="flex items-center gap-2 text-sm">
               <Loader2 className="size-4 animate-spin text-primary" />
-              Claude is reading {props.plans.length} sheets… {secs}s
+              {props.gen.stage === 'check' ? 'Claude is double-checking its draft against the drawings…' : `Claude is reading ${props.plans.length} sheets…`} {secs}s
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-muted">
               <div className="h-full animate-pulse rounded-full bg-primary transition-all" style={{ width: `${Math.min(95, 8 + secs / 1.8)}%` }} />
             </div>
-            <p className="text-xs text-muted-foreground">This usually takes one to three minutes. You can leave this page open and come back.</p>
+            <p className="text-xs text-muted-foreground">This usually takes two to five minutes. You can leave this page open and come back.</p>
             <Button variant="outline" size="sm" className="justify-self-start" onClick={props.onCancel}>
               Stop
             </Button>

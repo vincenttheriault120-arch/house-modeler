@@ -23,17 +23,18 @@ export interface Dim {
 
 export type Face = 'front' | 'back' | 'left' | 'right';
 
-export type RoofType = 'flat' | 'shed' | 'gable' | 'hip';
+/** parapet: a flat-looking roof hidden behind walls that rise all around it, with the roof inside sloping down (a depression). */
+export type RoofType = 'flat' | 'parapet' | 'shed' | 'gable' | 'hip';
 
 export interface Roof {
   type: RoofType;
-  /** Height from the top of the walls to the ridge (or the high side of a shed roof). */
+  /** Height from the top of the walls to the ridge, the high side of a shed roof, or the top of a parapet. */
   rise: Dim;
   /** How far the roof sticks out past the walls. */
   overhang: Dim;
   /** Gable and hip roofs: which way the ridge runs. */
   ridge: 'x' | 'y';
-  /** Shed roofs: the side the roof slopes down to. */
+  /** Shed and parapet roofs: the side the roof slopes down to. */
   low: Face;
 }
 
@@ -108,6 +109,7 @@ export const OPENING_NAMES: Record<OpeningKind, string> = {
 
 export const ROOF_NAMES: Record<RoofType, string> = {
   flat: 'Flat roof',
+  parapet: 'Flat roof behind parapets',
   shed: 'Shed roof',
   gable: 'Gable roof',
   hip: 'Hip roof',
