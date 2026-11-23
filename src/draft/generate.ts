@@ -154,7 +154,7 @@ The parts list runs from the roof down to the bottom of the foundations, with ev
 
 Volumes:
 - Outside wall faces. Split into separate boxes where the footprint, the height or the roof changes. A storey that overhangs (cantilevers) or is set back from the one below is its own box, with its base at its floor level.
-- Boxes must not overlap. A two-storey part under one roof is ONE box from its bottom to the top of its upper walls. ONE roof outline over ONE continuous set of walls is ONE volume.
+- Boxes must not overlap. A two-storey part under one roof is ONE box from its bottom to the top of its upper walls. ONE roof outline over ONE continuous set of walls is ONE volume. Rooms, interior walls and changes of use (garage, living room, bedroom) are not reasons to split.
 - Decks, steps, terraces and small canopies are not volumes. Foundations go in the foundations list, not in volumes.
 - Roof types: hip and gable as usual; shed = one plane, the walls following it; parapet = flat-topped walls all around with one plane hidden inside; folded = any roof made of several flat facets that is not a plain hip or gable (give each facet's corners). For shed, parapet and folded roofs, wall_height runs to the LOWEST roof edge and rise to the HIGHEST point.
 

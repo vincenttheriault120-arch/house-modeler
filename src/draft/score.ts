@@ -118,8 +118,19 @@ function roofTop(b: Block): number {
   return top(b) + (b.roof.type === 'flat' ? 0 : b.roof.rise.mm);
 }
 
-/** Pairs each expected part with the drafted block that overlaps it most, best pairs first. */
-function match(sheet: AnswerSheet, draft: ExteriorDraft): Map<string, Block> {
+/** How much of block b's volume lies inside box a. */
+function inside(a: Box, b: Box): number {
+  const len = (a0: number, a1: number, b0: number, b1: number) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+  const i = len(a.x0, a.x1, b.x0, b.x1) * len(a.y0, a.y1, b.y0, b.y1) * Math.max(1, len(a.z0, a.z1, b.z0, b.z1));
+  return i / ((b.x1 - b.x0) * (b.y1 - b.y0) * Math.max(1, b.z1 - b.z0));
+}
+
+/**
+ * Pairs each expected part with the drafted block that overlaps it most, best pairs first.
+ * Other blocks that lie mostly inside the same part join it, so a part Claude drafted in
+ * several boxes (e.g. split where a wall jogs) is scored as their outside box.
+ */
+function match(sheet: AnswerSheet, draft: ExteriorDraft): Map<string, Block[]> {
   const pairs: { part: SheetPart; block: Block; iou: number }[] = [];
   for (const part of sheet.parts) {
     for (const block of draft.blocks) {
@@ -130,14 +141,49 @@ function match(sheet: AnswerSheet, draft: ExteriorDraft): Map<string, Block> {
     }
   }
   pairs.sort((a, b) => b.iou - a.iou);
-  const out = new Map<string, Block>();
+  const out = new Map<string, Block[]>();
   const used = new Set<string>();
   for (const { part, block } of pairs) {
     if (out.has(part.id) || used.has(block.id)) continue;
-    out.set(part.id, block);
+    out.set(part.id, [block]);
     used.add(block.id);
   }
+  for (const part of sheet.parts) {
+    const first = out.get(part.id)?.[0];
+    if (!first) continue;
+    const box = partBox(part, blockBox(first));
+    for (const block of draft.blocks) {
+      if (used.has(block.id) || (part.kind === 'foundation') !== !!block.foundation) continue;
+      if (inside(box, blockBox(block)) >= 0.6) {
+        out.get(part.id)!.push(block);
+        used.add(block.id);
+      }
+    }
+  }
   return out;
+}
+
+/** The outside box of several blocks, as one block; the roof is the highest one's. */
+function merged(blocks: Block[]): Block {
+  if (blocks.length === 1) return blocks[0];
+  const boxes = blocks.map(blockBox);
+  const x0 = Math.min(...boxes.map((b) => b.x0));
+  const y0 = Math.min(...boxes.map((b) => b.y0));
+  const z0 = Math.min(...boxes.map((b) => b.z0));
+  const z1 = Math.max(...boxes.map((b) => b.z1));
+  const high = blocks.reduce((a, b) => (roofTop(b) > roofTop(a) ? b : a));
+  const mm = (v: number) => ({ mm: v, source: 'ai' as const });
+  return {
+    ...high,
+    name: blocks.map((b) => b.name).join('" + "'),
+    x: mm(x0),
+    y: mm(y0),
+    width: mm(Math.max(...boxes.map((b) => b.x1)) - x0),
+    depth: mm(Math.max(...boxes.map((b) => b.y1)) - y0),
+    base: mm(z0),
+    height: mm(z1 - z0),
+    roof: { ...high.roof, rise: mm(roofTop(high) - z1) },
+  };
 }
 
 export function scoreDraft(draft: ExteriorDraft, sheet: AnswerSheet, fmt: (mm: number) => string = (mm) => `${Math.round(mm)} mm`): Score {
@@ -152,7 +198,7 @@ export function scoreDraft(draft: ExteriorDraft, sheet: AnswerSheet, fmt: (mm: n
       return;
     }
     const off = Math.abs(got - w.mm);
-    const verdict: Verdict = off <= tol ? 'right' : off <= Math.max(CLOSE, 4 * tol) ? 'close' : 'wrong';
+    const verdict: Verdict = off <= tol ? 'right' : off <= Math.max(CLOSE, 2 * tol) ? 'close' : 'wrong';
     rows.push({ part, label, expected: fmt(w.mm), got: fmt(got), verdict });
   };
 
@@ -166,12 +212,13 @@ export function scoreDraft(draft: ExteriorDraft, sheet: AnswerSheet, fmt: (mm: n
 
   const matched = match(sheet, draft);
   for (const p of sheet.parts) {
-    const b = matched.get(p.id);
+    const found = matched.get(p.id);
     const name = p.name || p.id;
-    if (!b) {
+    if (!found) {
       rows.push({ part: name, label: p.kind === 'foundation' ? 'Foundation' : 'Part', expected: 'drafted', got: 'not found', verdict: 'missing' });
       continue;
     }
+    const b = merged(found);
     const part = `${name} (drafted as "${b.name}")`;
     num(part, 'Left side (x)', p.x, b.x.mm);
     num(part, 'Front (y)', p.y, b.y.mm);
@@ -190,7 +237,7 @@ export function scoreDraft(draft: ExteriorDraft, sheet: AnswerSheet, fmt: (mm: n
     }
   }
 
-  const usedIds = new Set([...matched.values()].map((b) => b.id));
+  const usedIds = new Set([...matched.values()].flat().map((b) => b.id));
   const extra = draft.blocks.filter((b) => !usedIds.has(b.id)).map((b) => b.name);
   const counts: Record<Verdict, number> = { right: 0, close: 0, wrong: 0, missing: 0 };
   for (const r of rows) counts[r.verdict]++;
