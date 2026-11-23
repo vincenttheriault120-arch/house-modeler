@@ -26,11 +26,6 @@ const Corner = z.object({
 });
 
 export const DraftSchema = z.object({
-  cross_check: z
-    .string()
-    .describe(
-      'Your working notes, written BEFORE the numbers, one short paragraph per volume: its outline on the roof plan and floor plans, what each of the four elevations shows of it (width or depth, wall tops, roof line), and how they agree. Then the same for each roof: the lines and arrows on the roof plan and the heights each elevation gives its edges.',
-    ),
   summary: z.string().describe('Two to four plain sentences: what the house is made of, and the inferred values most worth checking.'),
   levels: z
     .array(z.object({ name: z.string().describe('e.g. "Ground floor", "First floor", "First floor ceiling", "Low roof", "Roof top", "Basement slab"'), elevation: Value }))
@@ -100,7 +95,7 @@ Volumes:
 - ONE roof outline on the roof plan over ONE continuous set of walls is ONE volume. Lines drawn INSIDE a roof outline are the roof's own ridges, hips, valleys or folds: never split a volume at them.
 - Roof rise: for hip and gable roofs the ridge height is often not dimensioned; scale it from the elevations and say so.
 
-Each drawing is a 2D view of the same 3D house. No single view is enough: build each volume and roof in 3D by combining them, and only accept a shape that looks right on every view. Write this reasoning in cross_check before the numbers.
+Each drawing is a 2D view of the same 3D house. No single view is enough: build each volume and roof in 3D by combining them, and only accept a shape that looks right on every view.
 
 How to work, in this order:
 1. Footprints (x, y, width, depth) from the roof plan and the floor plans, using the written chain dimensions. A storey that sticks out past the one below (a cantilever) or is set back is its own volume.
@@ -194,7 +189,7 @@ export function reviewContent(draft: ExteriorDraft, problems: string[]): Anthrop
   const issues = problems.length ? `\n\nChecking your draft against itself also found:\n- ${problems.join('\n- ')}` : '';
   content.push({
     type: 'text',
-    text: `${intro}${issues}\n\nIn cross_check, list every difference you find between a picture and its drawing and how you fix it in 3D (a fix must keep every other view right). Then return the complete corrected draft. If everything already matches, return the same draft.`,
+    text: `${intro}${issues}\n\nFix every difference in 3D (a fix must keep every other view right) and return the complete corrected draft, with the summary saying briefly what you changed. If everything already matches, return the same draft.`,
   });
   return content;
 }
@@ -226,7 +221,11 @@ async function draftCall(
     }
   });
   const response = await stream.finalMessage();
-  if (response.stop_reason === 'refusal') throw new Error('Claude declined to read these plans.');
+  if (response.stop_reason === 'refusal') {
+    const d = (response as { stop_details?: { category?: string | null; explanation?: string | null } | null }).stop_details;
+    const why = [d?.category && `category: ${d.category}`, d?.explanation].filter(Boolean).join('; ');
+    throw new Error(`Claude declined to read these plans${why ? ` (${why})` : ''}. Try Redraft again.`);
+  }
   if (response.stop_reason === 'max_tokens') throw new Error('The draft was cut off. Try again.');
   if (!response.parsed_output) throw new Error("Claude's draft couldn't be read. Try again.");
   return response.parsed_output as DraftAnswer;

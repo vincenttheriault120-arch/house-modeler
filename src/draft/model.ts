@@ -642,11 +642,12 @@ export function placeOpening(draft: ExteriorDraft, face: Face, fromLeft: number,
   };
   const covers = (b: Block) =>
     face === 'front' || face === 'back' ? cx >= b.x.mm - 1 && cx <= b.x.mm + b.width.mm + 1 : cy >= b.y.mm - 1 && cy <= b.y.mm + b.depth.mm + 1;
-  const zIn = (b: Block) => bottom >= b.base.mm - 150 && bottom < top(b);
-  const pool = draft.blocks.filter(covers);
-  if (!pool.length) return null;
-  const inZ = pool.filter(zIn);
-  const list = inZ.length ? inZ : pool;
+  // Walls under a shed, gable, parapet or folded roof rise above the wall top to meet it.
+  const wallTop = (b: Block) => top(b) + (b.roof.type === 'flat' || b.roof.type === 'hip' ? 0 : b.roof.rise.mm);
+  const zIn = (b: Block) => bottom >= b.base.mm - 150 && bottom < wallTop(b);
+  // Only walls at the opening's height: an opening with no wall there is left out (and reported) rather than left floating.
+  const list = draft.blocks.filter(covers).filter(zIn);
+  if (!list.length) return null;
   const b = list.reduce((best, x) => (nearness(x) > nearness(best) ? x : best));
   const f = faceFrame(b, face);
   const lx = hf.start.x + hf.dir.x * fromLeft;
