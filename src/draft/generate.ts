@@ -10,6 +10,7 @@ import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind,
 import { SKETCH_TITLES, sketchPng, type SketchView } from './sketch';
 import { PLAN_READING } from './reading';
 import { measurePlans } from '../plans/measurePdf';
+import { applyMeasuredEaves } from './eaves';
 import { meterStream } from '../usage/meter';
 
 const Value = z.object({
@@ -188,7 +189,7 @@ function toBase64(buf: ArrayBuffer): string {
 }
 
 /** Introduces the heights the app measured from the drawings' lines. */
-export const MEASURED_INTRO = `Measured from the drawings' lines: the app read the exact position of every line on these sheets and measured heights with each sheet's own written levels as the ruler. These are not written values, but they are exact to about an inch, far better than judging by eye. Use them for heights that are not written (roof peaks, ridges, wall tops, eaves): match each to the edge you see on the drawing; for a pitched roof, the wall height under it runs to the measured eave of that roof, not to a ceiling level near it; convert from the drawing's level system to above grade with the datum, and mark them from_plans = false with ref "measured from the lines of <sheet>". A written value still wins over a measured one.`;
+export const MEASURED_INTRO = `Measured from the drawings' lines: the app read the exact position of every line on these sheets and measured heights with each sheet's own written levels as the ruler. These are not written values, but they are exact to about an inch, far better than judging by eye. Use them for heights that are not written (roof peaks, ridges, wall tops, eaves): match each to the edge you see on the drawing; for a pitched roof, the wall height under it runs to the measured eave of that roof, not to a ceiling level near it; convert from the drawing's level system to above grade with the datum, and mark them from_plans = false with ref "measured from the lines of <sheet>". A written value still wins over a measured one, but a written floor or ceiling level is not a written eave.`;
 
 /** The plan PDFs as document blocks, the last one marked for caching so follow-up calls reuse them. */
 export async function planDocumentBlocks(plans: PlanMeta[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {
@@ -219,7 +220,7 @@ export async function generateDraft(opts: {
   const content = await planDocumentBlocks(opts.plans);
   if (content.length === 0) throw new Error('No plan PDFs could be read from this project.');
   const measured = await measurePlans(opts.plans);
-  if (measured) content.push({ type: 'text', text: `${MEASURED_INTRO}\n\n${measured}` });
+  if (measured.text) content.push({ type: 'text', text: `${MEASURED_INTRO}\n\n${measured.text}` });
   content.push({ type: 'text', text: `Units: ${opts.units === 'imperial' ? 'feet-inches' : 'millimetres'}.\n\n${INVENTORY_ASK}` });
   const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content }];
@@ -241,7 +242,9 @@ export async function generateDraft(opts: {
       // Keep the first draft if the review fails.
     }
   }
-  return draft;
+  // Claude tends to rest a roof on the nearest written ceiling level even when the drawing puts
+  // its eave elsewhere, so the app sets pitched roofs' eaves to the measured ones itself.
+  return applyMeasuredEaves(draft, measured.sheets);
 }
 
 const SKETCH_VIEWS: SketchView[] = ['front', 'right', 'back', 'left', 'top', 'section'];
