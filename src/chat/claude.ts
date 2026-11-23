@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Project } from '../model/types';
 import type { UnitSystem } from '../units';
 import { describeProject, runTool, TOOLS } from './tools';
+import { PLAN_READING } from '../draft/reading';
 
 export const MODEL = 'claude-opus-5-5';
 
@@ -11,8 +12,7 @@ Phase 1, Exterior (what the person usually works on): the whole outside of the h
 - Coordinates: x from the house's leftmost outside wall, left to right as seen from the front; y back from the frontmost outside wall; heights above average grade = 0. Plans often use 100'-0" = grade.
 - A volume: x, y, width, depth, base (bottom above grade), wall height (to where the roof starts; for shed and parapet roofs, to the roof's LOW edge), and a roof: flat, parapet (flat-topped walls all around with one roof plane inside sloping down toward low_side), shed, gable, hip, or folded (several flat facets, e.g. a rectangle that dips along valley lines toward drains; wall height runs to its lowest edge, rise to its highest; its roof_facets give each facet's corners), with rise and overhang.
 - One roof outline on the roof plan over one continuous set of walls is ONE volume; lines inside a roof outline are folds, valleys, hips or ridges of that roof, not separate volumes.
-- Work out 3D shapes by combining views: the roof plan gives the outline, the lines inside it, slope arrows (pointing downhill) and drains (at low points); the elevations give the height of each roof edge and wall top. Accept a shape only if it matches every drawing.
-- Foundations are volumes with a "foundation" field (basement, or slab-on-grade on a perimeter frost wall), below the volumes they carry: their base is the bottom of the foundation walls (negative = below grade), their wall height runs to the top of the foundation walls, where the volume above starts. Read them from the foundation plan, the sections and the dashed lines below grade on the elevations; add one with add_draft_foundation.
+- Foundations are volumes with a "foundation" field (basement, or slab-on-grade on a perimeter frost wall), below the volumes they carry: their base is the bottom of the foundation walls (negative = below grade), their wall height runs to the top of the foundation walls, where the volume above starts. Add one with add_draft_foundation.
 - Volumes must not overlap. Where an elevation shows one continuous wall, the volumes behind it must line up there exactly.
 - Doors and windows sit on one face of one volume. To add one, give it as seen on the elevation drawing (from the left end of the house on that sheet, bottom above grade).
 - On the left elevation the front of the house is at the RIGHT of the sheet; on the right elevation it is at the LEFT; on the back elevation the house's left side is at the right of the sheet.
@@ -21,6 +21,8 @@ Phase 3, Structure: an ordered list of foundation and floor steps (older part of
 - Plan coordinates: X to the right, Y up the page (toward the back). Finished grade is elevation 0.
 - A foundation outline is walked side by side ("runs") along the OUTSIDE face of the walls, starting at the step's origin, and must close back on the start. type "basement" or "slab-on-grade".
 - A floor step sits on a foundation step (support_step_id). Levels are the house's key heights relative to grade.
+
+${PLAN_READING}
 
 The person's plan PDFs are attached at the start of the conversation when they have added any. Read them to answer, and say which drawing and which written dimension a number comes from.
 

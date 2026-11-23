@@ -40,6 +40,7 @@ const answer: DraftAnswer = {
     { elevation: 'front', kind: 'door', from_left: v("15' 9\"", false), bottom: v("2' 7\""), width: v("3' 0\""), height: v("7' 0\"") },
     { elevation: 'front', kind: 'window', from_left: v("100' 0\""), bottom: v('0"'), width: v('1"'), height: v('1"') },
   ],
+  conflicts: [{ about: 'Addition depth', sheets_say: ['Foundation plan: 39\' 11 1/2"', 'Ground floor plan: 39\' 1 1/4"'], used: '39\' 11 1/2"' }],
 };
 
 describe('exterior draft', () => {
@@ -53,6 +54,11 @@ describe('exterior draft', () => {
     expect(d.blocks[1].roof.low).toBe('left');
     // Openings on a volume that doesn't exist are dropped.
     expect(d.openings).toHaveLength(1);
+  });
+
+  it('keeps the places where the drawings disagree', () => {
+    expect(d.conflicts).toEqual([{ about: 'Addition depth', values: ['Foundation plan: 39\' 11 1/2"', 'Ground floor plan: 39\' 1 1/4"'], used: '39\' 11 1/2"' }]);
+    expect(answerToDraft({ ...answer, conflicts: [] }, 'imperial').conflicts).toBeUndefined();
   });
 
   it('lists each measurement on the views that show it', () => {
@@ -250,5 +256,37 @@ describe('exterior draft', () => {
     const p = draftFromSteps({ ...emptyProject(), storeys: 2 });
     expect(p.blocks).toHaveLength(1);
     expect(p.blocks[0].height.source).toBe('user');
+  });
+});
+
+describe('section sketch', () => {
+  it('keeps only what lies behind the cut, foundations included', async () => {
+    const { sketchTriangles, sectionCut } = await import('./sketch');
+    const d = answerToDraft(
+      {
+        ...answer,
+        foundations: [
+          {
+            name: 'Basement',
+            type: 'basement',
+            x: v('0"'),
+            y: v('0"'),
+            width: v("20' 1\""),
+            depth: v("26' 1\""),
+            bottom: v("-4' 7\""),
+            top: v("1' 7\""),
+            wall_thickness: v('8"'),
+            slab_thickness: v('4"'),
+          },
+        ],
+      },
+      'imperial',
+    );
+    const cut = sectionCut(d);
+    const tris = sketchTriangles(d, 'section');
+    expect(tris.length).toBeGreaterThan(0);
+    expect(Math.min(...tris.map((t) => t.d))).toBeGreaterThanOrEqual(cut - 0.5);
+    expect(tris.some((t) => t.kind === 'foundation')).toBe(true);
+    expect(tris.some((t) => t.kind === 'opening')).toBe(false);
   });
 });

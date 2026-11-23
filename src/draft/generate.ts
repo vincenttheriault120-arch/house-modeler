@@ -8,6 +8,7 @@ import { draftProblems, placeOpening, roofFacets } from './model';
 export { draftProblems, placeOpening };
 import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind, Roof, RoofType } from './types';
 import { SKETCH_TITLES, sketchPng, type SketchView } from './sketch';
+import { PLAN_READING } from './reading';
 
 const Value = z.object({
   value: z.string().describe('Length with units, e.g. "20\' 1\\"", "10\' 5\\"", "6 1/4\\"" or "2400 mm".'),
@@ -95,10 +96,51 @@ export const DraftSchema = z.object({
       }),
     )
     .describe('Every door, window, patio door and garage door visible on the four elevations, placed as drawn on each elevation.'),
+  conflicts: z
+    .array(
+      z.object({
+        about: z.string().describe('The part and the value, e.g. "Addition depth" or "Front elevation scale".'),
+        sheets_say: z.array(z.string()).describe('Each value as written, with its sheet, e.g. "Foundation plan: 39\'-11 1/2\\"".'),
+        used: z.string().describe('The value used in this draft.'),
+      }),
+    )
+    .describe('Every place two drawings give different values for the same thing, or a stated scale does not fit the written dimensions. Facts only. Empty if the drawings agree.'),
 });
 export type DraftAnswer = z.infer<typeof DraftSchema>;
 
-const SYSTEM = `You read a homeowner's residential architectural drawings (printed PDFs, often in French) and draft the WHOLE EXTERIOR of the house at once as a simple massing model: boxes ("volumes") with roofs, plus doors, windows and garage doors on the outside walls. The homeowner will then check every number against each drawing, so completeness and honest sourcing matter more than polish.
+export const InventorySchema = z.object({
+  datum: z.string().describe('The level that is average grade on these drawings, as written, e.g. "niveau sol moyen 100\'-0\\"".'),
+  sheets: z
+    .array(
+      z.object({
+        title: z.string().describe('The attached document title.'),
+        shows: z.enum(['foundation-plan', 'floor-plan', 'roof-plan', 'elevation', 'section', 'detail', 'other']),
+        which: z
+          .string()
+          .describe('Which floor, which side (and where the front of the house is on the sheet), or where the cut runs and which way it looks.'),
+        scale: z.string().describe('The scale the drawing is really at. If the title block and the label under the drawing differ, give both.'),
+        levels: z.array(z.string()).describe('Every level written on the sheet, as written.'),
+      }),
+    )
+    .describe('Every attached sheet.'),
+  parts: z
+    .array(
+      z.object({
+        name: z.string().describe('Short name the homeowner recognises.'),
+        kind: z.enum(['volume', 'foundation', 'porch-or-canopy', 'deck-or-terrace', 'other']),
+        sheets: z.array(z.string()).describe('Titles of every sheet that shows it, drawn or dashed.'),
+        shape: z.string().describe('One short fact about its shape, e.g. "set back 6\' behind a green roof, overhangs the back wall". Empty if plain.'),
+      }),
+    )
+    .describe('Every part of the house, from the roof down to the bottom of the foundations, everything below grade included.'),
+});
+export type Inventory = z.infer<typeof InventorySchema>;
+
+export type DraftStage = 'inventory' | 'draft' | 'check';
+
+const SYSTEM = `You read a homeowner's residential architectural drawings (printed PDFs, often in French) and draft the WHOLE EXTERIOR of the house as a simple massing model: boxes ("volumes") with roofs, the foundations below them, and the doors, windows and garage doors on the outside walls. The homeowner then checks every number against each drawing, so completeness and honest sourcing matter more than polish.
+
+You work in steps, each asked for in turn: first an inventory of the sheets and of every part of the house, then the draft, then a review of the draft drawn back in 2D.
 
 Coordinates (all views as the homeowner stands in front of the house):
 - x runs left to right along the front, from the house's leftmost outside wall (x = 0).
@@ -106,37 +148,35 @@ Coordinates (all views as the homeowner stands in front of the house):
 - Heights are above AVERAGE GRADE = 0. Drawings often use another datum (e.g. "niveau sol moyen 100'-0\\"" means grade = 100'-0"; then "plancher R.D.C. 102'-7\\"" is 2' 7" above grade). Convert every level and height.
 - Left and right elevations: "élévation gauche" shows the left side; on it the FRONT of the house is at the RIGHT of the sheet. On the right elevation the front is at the LEFT of the sheet. On the back elevation the house's left side is at the right of the sheet.
 
+${PLAN_READING}
+
+The parts list runs from the roof down to the bottom of the foundations, with everything below grade (basements, crawl spaces, slabs on grade and their frost walls) on it from the start, the same as walls and roofs. Footings are not drafted for now: a foundation ends at the top of its footing.
+
 Volumes:
-- Use outside wall faces. Split into separate boxes where the footprint, the height or the roof changes. A storey that overhangs (cantilevers) the one below is its own box with its base at its floor level.
-- Boxes must not overlap. A two-storey part with one roof is ONE box from its bottom to the top of its upper walls.
-- Exclude decks, steps, terraces, foundations below grade and small canopies.
-- ONE roof outline on the roof plan over ONE continuous set of walls is ONE volume. Lines drawn INSIDE a roof outline are the roof's own ridges, hips, valleys or folds: never split a volume at them.
-- Roof rise: for hip and gable roofs the ridge height is often not dimensioned; scale it from the elevations and say so.
+- Outside wall faces. Split into separate boxes where the footprint, the height or the roof changes. A storey that overhangs (cantilevers) or is set back from the one below is its own box, with its base at its floor level.
+- Boxes must not overlap. A two-storey part under one roof is ONE box from its bottom to the top of its upper walls. ONE roof outline over ONE continuous set of walls is ONE volume.
+- Decks, steps, terraces and small canopies are not volumes. Foundations go in the foundations list, not in volumes.
+- Roof types: hip and gable as usual; shed = one plane, the walls following it; parapet = flat-topped walls all around with one plane hidden inside; folded = any roof made of several flat facets that is not a plain hip or gable (give each facet's corners). For shed, parapet and folded roofs, wall_height runs to the LOWEST roof edge and rise to the HIGHEST point.
 
-Each drawing is a 2D view of the same 3D house. No single view is enough: build each volume and roof in 3D by combining them, and only accept a shape that looks right on every view.
+Foundations:
+- One per part with its own footprint or type, in the same x/y frame as the volumes; footprints usually match the walls above.
+- basement: bottom = the basement slab level; top = the top of the foundation wall, where the volume above starts.
+- slab-on-grade: top = the top of the slab; bottom = the bottom of the perimeter frost wall.
+- Wall and slab thickness from the plans and sections; otherwise typical values (8" walls, 4" slab), marked as inferred.
+- A volume's base and the top of its foundation are the same height, and they must not overlap.
 
-How to work, in this order:
-1. Footprints (x, y, width, depth) from the roof plan and the floor plans, using the written chain dimensions. A storey that sticks out past the one below (a cantilever) or is set back is its own volume.
-2. Heights from the elevations and sections: convert every level to grade = 0, then base and wall_height of each volume.
-3. Cross-check every volume on EVERY view where it shows: its width on the front and back elevations, its depth on the left and right elevations, its outline on the roof plan, and its wall tops on all four elevations. Where an elevation draws one continuous wall (one rectangle, one cladding), the volumes behind it must line up exactly there (same x or y edge, same top). Fix the numbers until every view's outline matches its drawing.
-4. Roofs, in 3D. The roof plan (plan de toiture) gives the shape from above: its outline, the lines inside it (ridges, hips, valleys, folds), slope arrows (they point DOWNHILL), and small circles (drains, at the LOW points). The elevations give heights: the levels written beside them (e.g. "niveau haut du toit" = roof top, "niveau bas du toit" = low roof), and the roof's edge on each side (flat at one level, or sloping from one level to another). Combine them: each region between lines on the roof plan is one flat facet; the height of each of its corners comes from the elevations where that corner shows; check that every arrow points downhill on your facets and the drains sit at the bottom. Then check the result on every elevation: a wall whose top slopes on a side elevation means the roof edge on that side slopes; a roof surface drawn (hatched or stippled) above a wall on an elevation means the roof rises behind that wall.
-5. Pick the roof type: hip and gable as usual; shed for one plane with the walls following it; parapet for flat-topped walls all around with one plane hidden inside; folded for anything made of several facets that is not a plain hip or gable (for example a rectangle whose edges are high on some sides and that dips along valley lines toward drains). For folded, wall_height runs to the LOWEST roof edge and rise to the HIGHEST.
+Openings: every door, window, patio door and garage door on the four elevations, placed as seen on that elevation sheet: from_left = from the left end of the house's outline on that sheet, bottom = above grade. Use sizes written on the plans (e.g. "36\\"x84\\"" = 36" wide by 84" high) when given.
 
-Foundations (below grade), in foundations: read them from the basement / foundation plan (plan du sous-sol, fondation), the sections (coupe longitudinale / transversale) and the dashed lines below the grade line on the elevations.
-- One foundation per part with its own footprint or type, e.g. a basement under the original house and a slab on grade under an addition or garage. Footprints use the outside face of the foundation walls, in the same x/y frame as the volumes; they usually match the walls above.
-- basement: bottom = the basement slab level (niv. dalle du sous-sol), top = the top of the foundation wall where the house above starts.
-- slab-on-grade: top = top of the slab (e.g. a garage floor a few inches above grade), bottom = bottom of the perimeter frost wall (top of its footing). If the depth is not written, scale it from the sections and say so.
-- Wall and slab thickness from the plans and sections (thick grey or hatched walls); otherwise infer typical values (8" walls, 4" slab) and say so.
-- The volumes above start at the top of their foundation: a volume's base and its foundation's top are the same height, and they must not overlap.
-
-Openings: list every door, window, patio door and garage door visible on the four elevations, placed exactly as you see them on that elevation sheet: from_left = distance from the left end of the house's outline on that sheet, bottom = height above grade. Use the window and door sizes written on plans (e.g. "36\"x84\"" = 36" wide by 84" high) when given; otherwise scale them from the elevation using its written dimensions.
-
-Sourcing (this is shown to the homeowner in black or red):
-- from_plans = true only when the number is written on a drawing or is the plain difference of two written levels or a sum of written chain dimensions.
-- Anything you scaled from the drawing, assumed or inferred is from_plans = false, with a short reason in ref. Never leave a value out: infer a sensible one instead.
+Sourcing (shown to the homeowner in black or red):
+- from_plans = true only when the number is written on a drawing, or is a plain sum or difference of written numbers.
+- Anything worked out another way, scaled or assumed is from_plans = false, with a short reason in ref. Never leave a value out: infer a sensible one instead.
 - Read dimension strings exactly (12'-1 1/2" → "12' 1 1/2\\""). Write every length in the requested unit system.
 
-French drawing terms: élévation avant/arrière/gauche/droite = front/back/left/right elevation; plan de toiture = roof plan; niveau = level; plancher = floor; plafond = ceiling; R.D.C. = ground floor; étage = upper floor; sous-sol = basement; sol moyen = average grade; haut/bas du toit = top/bottom of the roof; toit vert = green roof; fenêtre = window; porte = door; porte patio = patio door; porte de garage = garage door; existant = existing; nouveau/ajout = new/addition.`;
+French drawing terms: élévation avant/arrière/gauche/droite = front/back/left/right elevation; plan de toiture = roof plan; coupe = section; niveau = level; plancher = floor; plafond = ceiling; R.D.C. = ground floor; étage = upper floor; sous-sol = basement; dalle = slab; fondation = foundation; semelle = footing; sol moyen = average grade; haut/bas du toit = top/bottom of the roof; toit vert = green roof; fenêtre = window; porte = door; porte patio = patio door; porte de garage = garage door; existant = existing; nouveau/ajout = new/addition; échelle = scale.`;
+
+const INVENTORY_ASK = `Step 1, inventory. List every attached sheet: what it shows, which floor or side or where it cuts, its real scale, and the levels written on it. Then list every part of the house, from the roof down to the foundations, with the sheets that show each one. No numbers beyond what is written yet.`;
+
+const DRAFT_ASK = `Step 2, draft. Using your inventory, draft the whole exterior: for each part on your list, read its footprint, heights and shape from the sheets that show it, check it against every one of those sheets, and only then write its numbers. List every place the drawings disagree in conflicts.`;
 
 function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -170,24 +210,25 @@ export async function generateDraft(opts: {
   plans: PlanMeta[];
   units: UnitSystem;
   signal?: AbortSignal;
-  onProgress?: (chars: number, stage: 'draft' | 'check') => void;
+  onProgress?: (chars: number, stage: DraftStage) => void;
 }): Promise<ExteriorDraft> {
   const content = await planDocumentBlocks(opts.plans);
   if (content.length === 0) throw new Error('No plan PDFs could be read from this project.');
-  content.push({
-    type: 'text',
-    text: `Units: ${opts.units === 'imperial' ? 'feet-inches' : 'millimetres'}.\n\nDraft the whole exterior of this house from the attached drawings.`,
-  });
+  content.push({ type: 'text', text: `Units: ${opts.units === 'imperial' ? 'feet-inches' : 'millimetres'}.\n\n${INVENTORY_ASK}` });
   const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content }];
-  let answer = await draftCall(client, messages, opts, 'draft');
+  // Step 1: what each sheet is and every part of the house, before any numbers.
+  const inventory = await structuredCall(client, messages, InventorySchema, opts, 'inventory');
+  messages.push({ role: 'assistant', content: [{ type: 'text', text: JSON.stringify(inventory) }] }, { role: 'user', content: DRAFT_ASK });
+  // Step 2: the draft, part by part, checked across the sheets.
+  let answer = await structuredCall(client, messages, DraftSchema, opts, 'draft');
   let draft = answerToDraft(answer, opts.units);
   // One review pass: draw the draft from every side, put it next to the drawings, and let Claude correct it.
   const review = reviewContent(draft, draftProblems(draft, answer));
   if (review.length) {
     messages.push({ role: 'assistant', content: [{ type: 'text', text: JSON.stringify(answer) }] }, { role: 'user', content: review });
     try {
-      answer = await draftCall(client, messages, opts, 'check');
+      answer = await structuredCall(client, messages, DraftSchema, opts, 'check');
       draft = answerToDraft(answer, opts.units);
     } catch (e) {
       if (opts.signal?.aborted) throw e;
@@ -197,7 +238,7 @@ export async function generateDraft(opts: {
   return draft;
 }
 
-const SKETCH_VIEWS: SketchView[] = ['front', 'right', 'back', 'left', 'top'];
+const SKETCH_VIEWS: SketchView[] = ['front', 'right', 'back', 'left', 'top', 'section'];
 
 /** The review request: the draft drawn from each side, plus any problems found in it. Empty if there is nothing to show. */
 export function reviewContent(draft: ExteriorDraft, problems: string[]): Anthropic.Beta.BetaContentBlockParam[] {
@@ -209,7 +250,7 @@ export function reviewContent(draft: ExteriorDraft, problems: string[]): Anthrop
   }
   if (!content.length && !problems.length) return [];
   const intro = content.length
-    ? 'Above is your draft drawn back in 2D, one picture per drawing. Compare each picture with its drawing side by side: the outline of every volume, where walls break or run continuous, the wall tops, the roof shape and the height of each roof edge, and every door and window.'
+    ? 'Above is your draft drawn back in 2D, one picture per drawing. Compare each picture with its drawing side by side: the outline of every volume, where walls break or run continuous, the wall tops, the roof shape and the height of each roof edge, every door and window, and in the section, the foundations and floor levels against grade.'
     : 'Review your draft against the drawings once more.';
   const issues = problems.length ? `\n\nChecking your draft against itself also found:\n- ${problems.join('\n- ')}` : '';
   content.push({
@@ -219,19 +260,20 @@ export function reviewContent(draft: ExteriorDraft, problems: string[]): Anthrop
   return content;
 }
 
-async function draftCall(
+async function structuredCall<T extends z.ZodType>(
   client: Anthropic,
   messages: Anthropic.Beta.BetaMessageParam[],
-  opts: { signal?: AbortSignal; onProgress?: (chars: number, stage: 'draft' | 'check') => void },
-  stage: 'draft' | 'check',
-): Promise<DraftAnswer> {
+  schema: T,
+  opts: { signal?: AbortSignal; onProgress?: (chars: number, stage: DraftStage) => void },
+  stage: DraftStage,
+): Promise<z.infer<T>> {
   const stream = client.beta.messages.stream(
     {
       model: MODEL,
       max_tokens: 64000,
       system: SYSTEM,
       thinking: { type: 'adaptive' },
-      output_config: { effort: 'high', format: betaZodOutputFormat(DraftSchema) },
+      output_config: { effort: 'high', format: betaZodOutputFormat(schema) },
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       messages,
@@ -253,7 +295,7 @@ async function draftCall(
   }
   if (response.stop_reason === 'max_tokens') throw new Error('The draft was cut off. Try again.');
   if (!response.parsed_output) throw new Error("Claude's draft couldn't be read. Try again.");
-  return response.parsed_output as DraftAnswer;
+  return response.parsed_output as z.infer<T>;
 }
 
 function id(prefix: string, i: number) {
@@ -329,7 +371,8 @@ export function answerToDraft(a: DraftAnswer, units: UnitSystem): ExteriorDraft 
       height: d(o.height, 1),
     });
   });
-  return { ...base, openings };
+  const conflicts = (a.conflicts ?? []).map((c) => ({ about: c.about, values: c.sheets_say, used: c.used }));
+  return { ...base, openings, ...(conflicts.length ? { conflicts } : {}) };
 }
 
 /** Shift everything so the house's front-left corner sits at 0, 0. */

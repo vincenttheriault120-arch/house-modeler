@@ -1,7 +1,7 @@
 import { bounds, draftMeshes, type P3 } from './model';
 import type { ExteriorDraft } from './types';
 
-export type SketchView = 'front' | 'back' | 'left' | 'right' | 'top';
+export type SketchView = 'front' | 'back' | 'left' | 'right' | 'top' | 'section';
 
 export const SKETCH_TITLES: Record<SketchView, string> = {
   front: 'Your draft seen from the front (oriented like the front elevation)',
@@ -9,12 +9,38 @@ export const SKETCH_TITLES: Record<SketchView, string> = {
   left: 'Your draft seen from the left side (oriented like the left elevation: the front of the house is on the right)',
   right: 'Your draft seen from the right side (oriented like the right elevation: the front of the house is on the left)',
   top: 'Your draft seen from above (oriented like the roof plan: the front of the house is at the bottom)',
+  section:
+    'Your draft cut across its width halfway back and seen from the front, like a section: the black line is grade, and everything below it is your foundations (basements, slabs on grade and their frost walls)',
 };
+
+/** Where the section sketch cuts: halfway back through the whole draft. */
+export function sectionCut(draft: ExteriorDraft): number {
+  const ys = draft.blocks.flatMap((b) => [b.y.mm, b.y.mm + b.depth.mm]);
+  return ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0;
+}
+
+/** Keeps the part of a polygon at or behind y = cut. */
+function clipBehind(pts: P3[], cut: number): P3[] {
+  const out: P3[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    const ina = a.y >= cut;
+    const inb = b.y >= cut;
+    if (ina) out.push(a);
+    if (ina !== inb) {
+      const t = (cut - a.y) / (b.y - a.y);
+      out.push({ x: a.x + t * (b.x - a.x), y: cut, z: a.z + t * (b.z - a.z) });
+    }
+  }
+  return out;
+}
 
 /** Sheet coordinates for a view: h to the right, w up, d away from the viewer. */
 function project(view: SketchView, p: P3): { h: number; w: number; d: number } {
   switch (view) {
     case 'front':
+    case 'section':
       return { h: p.x, w: p.z, d: p.y };
     case 'back':
       return { h: -p.x, w: p.z, d: -p.y };
@@ -41,6 +67,7 @@ export function sketchTriangles(draft: ExteriorDraft, view: SketchView): Tri[] {
   const ll = Math.hypot(light.x, light.y, light.z);
   // Doors and windows only on the side being looked at, so ones on the far walls don't show through.
   const facing = new Set(draft.openings.filter((o) => o.face === view).map((o) => o.id));
+  const cut = view === 'section' ? sectionCut(draft) : null;
   for (const m of draftMeshes(draft)) {
     if (m.kind === 'opening' && !facing.has(m.id)) continue;
     const a = m.positions;
@@ -52,8 +79,10 @@ export function sketchTriangles(draft: ExteriorDraft, view: SketchView): Tri[] {
       const nl = Math.hypot(nx, ny, nz);
       if (nl < 1e-6) continue;
       const shade = Math.abs((nx * light.x + ny * light.y + nz * light.z) / (nl * ll));
-      const q = p.map((pt) => project(view, pt));
-      out.push({ pts: q, d: (q[0].d + q[1].d + q[2].d) / 3, shade, kind: m.kind });
+      const kept = cut === null ? p : clipBehind(p, cut);
+      if (kept.length < 3) continue;
+      const q = kept.map((pt) => project(view, pt));
+      out.push({ pts: q, d: q.reduce((sum, v) => sum + v.d, 0) / q.length, shade, kind: m.kind });
     }
   }
   // Painter's order: far first. Openings sit just proud of walls, so draw them after walls at equal depth.
@@ -84,7 +113,7 @@ export function sketchPng(draft: ExteriorDraft, view: SketchView, size = 900): s
   const Y = (w: number) => height - pad - (w - w0) * scale;
   ctx.lineJoin = 'round';
   for (const t of tris) {
-    const g = t.kind === 'opening' ? 40 : Math.round(150 + 90 * t.shade);
+    const g = t.kind === 'opening' ? 40 : t.kind === 'foundation' ? Math.round(110 + 60 * t.shade) : Math.round(150 + 90 * t.shade);
     const c = t.kind === 'roof' ? `rgb(${g - 10},${g - 10},${g})` : `rgb(${g},${g},${g})`;
     ctx.fillStyle = c;
     ctx.strokeStyle = c;
@@ -108,7 +137,7 @@ export function sketchPng(draft: ExteriorDraft, view: SketchView, size = 900): s
   ctx.fillStyle = '#000';
   ctx.font = '14px sans-serif';
   ctx.fillText(
-    `${view} view · house ${Math.round(b.x1 - b.x0)} mm wide, ${Math.round(b.y1 - b.y0)} mm deep, ${Math.round(b.z1)} mm high above grade`,
+    `${view === 'section' ? 'section' : `${view} view`} · house ${Math.round(b.x1 - b.x0)} mm wide, ${Math.round(b.y1 - b.y0)} mm deep, ${Math.round(b.z1)} mm high above grade`,
     8,
     18,
   );
