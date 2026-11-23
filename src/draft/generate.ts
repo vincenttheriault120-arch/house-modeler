@@ -188,7 +188,7 @@ function toBase64(buf: ArrayBuffer): string {
 }
 
 /** Introduces the heights the app measured from the drawings' lines. */
-export const MEASURED_INTRO = `Measured from the drawings' lines: the app read the exact position of every line on these sheets and measured heights with each sheet's own written levels as the ruler. These are not written values, but they are exact to about an inch, far better than judging by eye. Use them for heights that are not written (roof peaks, ridges, wall tops, eaves): match each to the edge you see on the drawing, convert from the drawing's level system to above grade with the datum, and mark them from_plans = false with ref "measured from the lines of <sheet>". A written value still wins over a measured one.`;
+export const MEASURED_INTRO = `Measured from the drawings' lines: the app read the exact position of every line on these sheets and measured heights with each sheet's own written levels as the ruler. These are not written values, but they are exact to about an inch, far better than judging by eye. Use them for heights that are not written (roof peaks, ridges, wall tops, eaves): match each to the edge you see on the drawing; for a pitched roof, the wall height under it runs to the measured eave of that roof, not to a ceiling level near it; convert from the drawing's level system to above grade with the datum, and mark them from_plans = false with ref "measured from the lines of <sheet>". A written value still wins over a measured one.`;
 
 /** The plan PDFs as document blocks, the last one marked for caching so follow-up calls reuse them. */
 export async function planDocumentBlocks(plans: PlanMeta[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {

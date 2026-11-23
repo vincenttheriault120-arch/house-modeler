@@ -32,8 +32,11 @@ export interface SheetMeasures {
   /** Feet per screen point, from the written levels. */
   ftPerPt: number;
   levels: string[];
-  /** Highest points where two sloping lines meet: height in feet (drawing's level system), position in feet from the left wall. */
-  peaks: { height: number; at: number }[];
+  /**
+   * Highest points where two sloping lines meet: height in feet (drawing's level system), position in feet from the left wall.
+   * eave: where the roof's sloping lines from that peak end at the bottom (the lowest edge of the roof), and how far it runs.
+   */
+  peaks: { height: number; at: number; eave?: { height: number; from: number; to: number } }[];
   /** Long horizontal edges (or evenly spaced courses such as siding, from height down to bottom), and where they run, in feet from the left wall. */
   edges: { height: number; bottom?: number; courses?: number; from: number; to: number }[];
 }
@@ -46,18 +49,13 @@ export function parseLevel(text: string): number | null {
   return ft >= 50 ? ft : null;
 }
 
-/** 126.25 → 126' 3" (to the nearest inch). */
+/** 126.25 → 126' 3", 118.625 → 118' 7 1/2" (to the nearest half inch). */
 export function fmtFt(ft: number): string {
   const sign = ft < 0 ? '-' : '';
-  let a = Math.abs(ft);
-  let f = Math.floor(a);
-  let i = Math.round((a - f) * 12);
-  if (i === 12) {
-    f += 1;
-    i = 0;
-  }
-  a = f;
-  return `${sign}${a}' ${i}"`;
+  const halves = Math.round(Math.abs(ft) * 24);
+  const f = Math.floor(halves / 24);
+  const h = halves - f * 24;
+  return `${sign}${f}' ${Math.floor(h / 2)}${h % 2 ? ' 1/2' : ''}"`;
 }
 
 const len = (s: Seg) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
@@ -162,9 +160,40 @@ export function measureFromVectors(texts: TextBox[], segs: Seg[]): SheetMeasures
     if (!ends.has(key)) ends.set(key, { x: hi.x, y: hi.y, dirs: new Set() });
     ends.get(key)!.dirs.add(lo.x < hi.x ? 'l' : 'r');
   }
-  const peaks: { height: number; at: number }[] = [];
+  // The eave of a peak: follow each sloping line down from the peak, through any line that
+  // carries on in the same direction from where the last one ended, to where the slope stops.
+  // That is the bottom edge of the roof, measured from the drawing rather than assumed to sit
+  // on a written floor or ceiling level (a roof often bears below or above the ceiling).
+  const sloped = drawn
+    .filter((s) => !horizontal(s) && !vertical(s) && len(s) * ftPerPt >= 1)
+    .map((s) => (s.y1 < s.y2 ? { hx: s.x1, hy: s.y1, lx: s.x2, ly: s.y2 } : { hx: s.x2, hy: s.y2, lx: s.x1, ly: s.y1 }));
+  const near = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) < 1 && Math.abs(ay - by) < 1;
+  function slopeEnd(px: number, py: number, side: 'l' | 'r'): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let cur = { x: px, y: py };
+    let slope = 0; // set by the first line: later pieces must carry on at the same slope
+    for (let step = 0; step < 20; step++) {
+      const next = sloped
+        .filter((s) => {
+          if (!near(s.hx, s.hy, cur.x, cur.y) || (side === 'l' ? s.lx >= s.hx : s.lx <= s.hx) || s.ly <= cur.y + 0.5) return false;
+          const k = (s.ly - s.hy) / Math.abs(s.lx - s.hx);
+          return !slope || Math.abs(k - slope) < 0.05 * slope;
+        })
+        .sort((a, b) => b.ly - a.ly)[0];
+      if (!next) break;
+      if (!slope) slope = (next.ly - next.hy) / Math.abs(next.lx - next.hx);
+      cur = { x: next.lx, y: next.ly };
+      best = cur;
+    }
+    return best;
+  }
+  const peaks: SheetMeasures['peaks'] = [];
   for (const e of [...ends.values()].filter((e) => e.dirs.size === 2).sort((a, b) => a.y - b.y)) {
-    const p = { height: H(e.y), at: X(e.x) };
+    const p: SheetMeasures['peaks'][number] = { height: H(e.y), at: X(e.x) };
+    const l = slopeEnd(e.x, e.y, 'l');
+    const r = slopeEnd(e.x, e.y, 'r');
+    // Both sides end at the same height on a symmetric roof; otherwise the lower end is the eave.
+    if (l && r) p.eave = { height: H(Math.max(l.y, r.y)), from: X(l.x), to: X(r.x) };
     if (peaks.some((q) => Math.abs(q.at - p.at) < 2)) continue;
     peaks.push(p);
     if (peaks.length === 8) break;
@@ -231,6 +260,13 @@ export function describeMeasures(title: string, m: SheetMeasures): string {
     `"${title}": heights in the drawing's own level system (the same as its written levels), measured with its written levels ${m.levels.join(', ')} as the ruler, about ±1". Positions are feet from the leftmost wall line on the sheet.`,
   ];
   if (m.peaks.length) lines.push(`- Peaks where two sloping lines meet: ${m.peaks.map((p) => `${fmtFt(p.height)} at ${fmtFt(p.at)}`).join('; ')}.`);
+  const eaves = m.peaks.filter((p) => p.eave);
+  if (eaves.length)
+    lines.push(
+      `- Roof eaves, where the sloping lines down from each peak end (the bottom edge of that roof, as drawn): ${eaves
+        .map((p) => `under the ${fmtFt(p.height)} peak, ${fmtFt(p.eave!.height)} (from ${fmtFt(p.eave!.from)} to ${fmtFt(p.eave!.to)})`)
+        .join('; ')}.`,
+    );
   if (m.edges.length)
     lines.push(`- Long horizontal edges: ${m.edges
         .map((e) => `${e.courses ? `${e.courses} evenly spaced lines (siding or courses) from ${fmtFt(e.height)} down to ${fmtFt(e.bottom!)}` : fmtFt(e.height)} (from ${fmtFt(e.from)} to ${fmtFt(e.to)})`)
