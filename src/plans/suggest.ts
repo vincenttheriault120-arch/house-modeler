@@ -10,6 +10,8 @@ import type { Run } from '../model/geometry';
 import { parseLength, type UnitSystem } from '../units';
 import { getPlanData, PLAN_KINDS, type PlanKind, type PlanMeta } from './store';
 import type { Level, LevelKind } from '../model/levels';
+import { meterStream } from '../usage/meter';
+import type { Feature } from '../usage/log';
 
 const Length = z.object({
   value: z.string().nullable().describe('Length with units, e.g. "26\' 1\\"" or "8\\"". null if it cannot be determined at all.'),
@@ -80,10 +82,12 @@ async function ask<T extends z.ZodType>(opts: {
   system: string;
   content: Anthropic.Beta.BetaContentBlockParam[];
   schema: T;
+  feature: Feature;
   signal?: AbortSignal;
 }): Promise<z.infer<T>> {
   const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
-  const response = await client.beta.messages.parse(
+  // Streamed so a call stopped partway is still logged with the tokens it used.
+  const stream = client.beta.messages.stream(
     {
       model: MODEL,
       max_tokens: 16000,
@@ -96,6 +100,7 @@ async function ask<T extends z.ZodType>(opts: {
     },
     { signal: opts.signal },
   );
+  const response = await meterStream(stream, { feature: opts.feature, model: MODEL }).finalMessage();
   if (response.stop_reason === 'refusal') throw new Error('Claude declined to read these plans.');
   if (response.stop_reason === 'max_tokens') throw new Error('The answer was cut off. Try again with fewer plans selected.');
   if (!response.parsed_output) throw new Error("Claude's answer couldn't be read. Try again.");
@@ -124,7 +129,7 @@ export async function suggestFoundation(opts: {
 }): Promise<FoundationSuggestion> {
   const content = await planDocuments(opts.plans);
   content.push(request(opts.project, opts.step, opts.units, 'foundation'));
-  return ask({ apiKey: opts.apiKey, system: SYSTEM, content, schema: FoundationSuggestion, signal: opts.signal });
+  return ask({ apiKey: opts.apiKey, system: SYSTEM, content, schema: FoundationSuggestion, feature: 'Suggest foundation', signal: opts.signal });
 }
 
 export const FloorSuggestion = z.object({
@@ -162,7 +167,7 @@ export async function suggestFloor(opts: {
 }): Promise<FloorSuggestion> {
   const content = await planDocuments(opts.plans);
   content.push(request(opts.project, opts.step, opts.units, 'floor'));
-  return ask({ apiKey: opts.apiKey, system: FLOOR_SYSTEM, content, schema: FloorSuggestion, signal: opts.signal });
+  return ask({ apiKey: opts.apiKey, system: FLOOR_SYSTEM, content, schema: FloorSuggestion, feature: 'Suggest floor', signal: opts.signal });
 }
 
 export const FLOOR_ROWS: { key: Exclude<keyof FloorParams, 'supportId' | 'joistDirection' | 'beam' | 'levelId'>; field: keyof FloorSuggestion; label: string }[] = [
@@ -281,7 +286,7 @@ export async function labelPlan(apiKey: string, plan: PlanMeta, signal?: AbortSi
     text: `Which drawing is this? Kinds: ${PLAN_KINDS.map((k) => `${k.value} (${k.label})`).join(', ')}. For elevations, "front" faces the street. French: "élévation avant/arrière/latérale gauche/droite", "plan du sous-sol", "rez-de-chaussée", "étage", "coupe", "toiture".`,
   });
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  const response = await client.beta.messages.parse(
+  const stream = client.beta.messages.stream(
     {
       model: LABEL_MODEL,
       max_tokens: 1024,
@@ -292,6 +297,7 @@ export async function labelPlan(apiKey: string, plan: PlanMeta, signal?: AbortSi
     },
     { signal },
   );
+  const response = await meterStream(stream, { feature: 'Label plan', stage: plan.name, model: LABEL_MODEL }).finalMessage();
   if (!response.parsed_output) throw new Error("Couldn't label this plan.");
   return response.parsed_output;
 }
@@ -341,7 +347,7 @@ ${describeProject(opts.project, opts.units)}
 
 Propose the house's levels from the attached drawings.`,
   });
-  return ask({ apiKey: opts.apiKey, system: LEVELS_SYSTEM, content, schema: LevelsSuggestion, signal: opts.signal });
+  return ask({ apiKey: opts.apiKey, system: LEVELS_SYSTEM, content, schema: LevelsSuggestion, feature: 'Suggest levels', signal: opts.signal });
 }
 
 /**

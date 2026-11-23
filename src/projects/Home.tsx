@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useTheme } from '../theme';
 import type { FolderState } from './folderAccess';
 import type { Location, ProjectSummary } from './types';
+import { CostButton } from '../usage/CostDashboard';
 
 interface Props {
   folder: FolderState;
@@ -55,6 +56,7 @@ export function Home(props: Props) {
         <Box className="size-5" />
         <h1 className="text-sm font-semibold">House Modeler</h1>
         <div className="flex-1" />
+        <CostButton />
         <Button variant="ghost" size="icon" className="size-8" onClick={toggleTheme} aria-label={dark ? 'Light theme' : 'Dark theme'}>
           {dark ? <Sun /> : <Moon />}
         </Button>

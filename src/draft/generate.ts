@@ -10,6 +10,7 @@ import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind,
 import { SKETCH_TITLES, sketchPng, type SketchView } from './sketch';
 import { PLAN_READING } from './reading';
 import { measurePlans } from '../plans/measurePdf';
+import { meterStream } from '../usage/meter';
 
 const Value = z.object({
   value: z.string().describe('Length with units, e.g. "20\' 1\\"", "10\' 5\\"", "6 1/4\\"" or "2400 mm".'),
@@ -272,7 +273,8 @@ async function structuredCall<T extends z.ZodType>(
   opts: { signal?: AbortSignal; onProgress?: (chars: number, stage: DraftStage) => void },
   stage: DraftStage,
 ): Promise<z.infer<T>> {
-  const stream = client.beta.messages.stream(
+  const stream = meterStream(
+    client.beta.messages.stream(
     {
       model: MODEL,
       max_tokens: 64000,
@@ -284,6 +286,8 @@ async function structuredCall<T extends z.ZodType>(
       messages,
     },
     { signal: opts.signal },
+    ),
+    { feature: 'Redraft', stage, model: MODEL },
   );
   let chars = 0;
   stream.on('streamEvent', (e) => {
