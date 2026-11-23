@@ -3,6 +3,7 @@ import type { Project } from '../model/types';
 import type { UnitSystem } from '../units';
 import { describeProject, runTool, TOOLS } from './tools';
 import { PLAN_READING } from '../draft/reading';
+import { meterStream } from '../usage/meter';
 
 export const MODEL = 'claude-opus-5-5';
 
@@ -76,7 +77,8 @@ export async function runTurn(
   let wroteText = false;
   for (let i = 0; i < 12; i++) {
     let firstDelta = true;
-    const stream = client.beta.messages.stream(
+    const stream = meterStream(
+      client.beta.messages.stream(
       {
         model: MODEL,
         max_tokens: 64000,
@@ -89,6 +91,8 @@ export async function runTurn(
         messages,
       },
       { signal },
+      ),
+      { feature: 'Ask Claude', stage: `call ${i + 1}`, model: MODEL },
     );
     stream.on('text', (delta) => {
       // Separate text from consecutive model calls in the same turn.

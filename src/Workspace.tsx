@@ -58,6 +58,8 @@ import { levelMarks, lengthDimensions } from './model/dimensions';
 import { PhaseBar, PhasePlaceholder } from './phases';
 import { ExteriorPhase } from './draft/ExteriorPhase';
 import { exportDraftGlb } from './draft/export';
+import { CostButton } from './usage/CostDashboard';
+import { setUsageProject } from './usage/meter';
 
 function PanelHeading({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{children}</h2>;
@@ -91,6 +93,9 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
   const planInput = useRef<HTMLInputElement>(null);
   // PlanViewer and Claude's suggestions read plan bytes through the active store.
   setActivePlanStore(planStore);
+  // Claude calls made from here are logged against this project.
+  setUsageProject(project.name);
+  useEffect(() => () => setUsageProject(''), []);
   useEffect(() => {
     setActivePlanStore(planStore);
     return () => setActivePlanStore(null);
@@ -254,6 +259,7 @@ export default function Workspace({ initial, whereLabel, onSave, planStore, newP
           </Button>
         </div>
         <Separator orientation="vertical" className="mx-1 !h-6" />
+        <CostButton />
         <Button variant={chatOpen ? 'default' : 'outline'} size="sm" onClick={() => setChatOpen((o) => !o)}>
           <Sparkles /> Ask Claude
         </Button>
