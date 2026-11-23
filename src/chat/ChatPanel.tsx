@@ -26,6 +26,7 @@ const TOOL_LABELS: Record<string, string> = {
   set_draft_values: 'Changed measurements of the draft',
   update_draft_volume: 'Changed a volume of the draft',
   add_draft_volume: 'Added a volume to the draft',
+  add_draft_foundation: 'Added a foundation to the draft',
   add_draft_opening: 'Added a door or window',
   remove_draft_part: 'Removed a part of the draft',
   add_foundation_step: 'Added a foundation step',

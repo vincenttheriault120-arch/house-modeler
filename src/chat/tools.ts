@@ -261,6 +261,29 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
     },
   },
   {
+    name: 'add_draft_foundation',
+    description:
+      'Add a foundation below the house to the exterior draft: a basement, or a slab on grade on a perimeter frost wall. Same x/y frame as the volumes; heights relative to grade (below grade is negative). Remove an existing one first to replace it.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        type: { type: 'string', enum: ['basement', 'slab-on-grade'] },
+        x: LENGTH,
+        y: LENGTH,
+        width: LENGTH,
+        depth: LENGTH,
+        bottom: { ...LENGTH, description: 'Bottom of the foundation walls relative to grade, usually negative (basement: slab level). ' + LENGTH.description },
+        top: { ...LENGTH, description: 'Top of the foundation walls relative to grade (slab on grade: top of the slab). ' + LENGTH.description },
+        wall_thickness: LENGTH,
+        slab_thickness: LENGTH,
+      },
+      required: ['name', 'type', 'x', 'y', 'width', 'depth', 'bottom', 'top'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'add_draft_opening',
     description:
       'Add a door or window to the exterior draft, placed as seen on an elevation drawing: from_left = from the left end of the house as drawn on that elevation, bottom = above grade. It goes on the wall nearest the viewer at that spot.',
@@ -531,6 +554,29 @@ function runDraftTool(project: Project, name: string, input: Input): { project: 
       const added = withFacets(b, input.roof_facets);
       return { project: { ...project, exterior: { ...draft, blocks: [...draft.blocks, added] } }, result: `Added volume ${added.id}.` };
     }
+    case 'add_draft_foundation': {
+      if (input.type !== 'basement' && input.type !== 'slab-on-grade') throw new ToolInputError('type must be basement or slab-on-grade');
+      const bottom = len(input.bottom, 'bottom');
+      const topZ = len(input.top, 'top');
+      if (topZ <= bottom) throw new ToolInputError('top must be above bottom');
+      const b: Block = {
+        id: `fnd-${rid()}`,
+        name: String(input.name),
+        x: ai(len(input.x, 'x')),
+        y: ai(len(input.y, 'y')),
+        width: ai(len(input.width, 'width')),
+        depth: ai(len(input.depth, 'depth')),
+        base: ai(bottom),
+        height: ai(topZ - bottom),
+        roof: { type: 'flat', rise: ai(0), overhang: ai(0), ridge: 'x', low: 'left' },
+        foundation: {
+          type: input.type === 'basement' ? 'basement' : 'slab',
+          wall: ai(input.wall_thickness === undefined ? 203.2 : len(input.wall_thickness, 'wall_thickness')),
+          slab: ai(input.slab_thickness === undefined ? 101.6 : len(input.slab_thickness, 'slab_thickness')),
+        },
+      };
+      return { project: { ...project, exterior: { ...draft, blocks: [...draft.blocks, b] } }, result: `Added foundation ${b.id}.` };
+    }
     case 'add_draft_opening': {
       if (!FACES.includes(input.elevation as Face)) throw new ToolInputError('elevation is invalid');
       const width = len(input.width, 'width');
@@ -567,6 +613,7 @@ function describeDraft(project: Project, units: UnitSystem) {
     volumes: d.blocks.map((b) => ({
       volume_id: b.id,
       name: b.name,
+      ...(b.foundation ? { foundation: b.foundation.type === 'basement' ? 'basement' : 'slab-on-grade' } : {}),
       roof_type: b.roof.type,
       ridge_along: b.roof.ridge === 'x' ? 'width' : 'depth',
       low_side: b.roof.low,

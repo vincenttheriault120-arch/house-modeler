@@ -54,7 +54,22 @@ export interface Roof {
   facets?: RoofPoint[][];
 }
 
-/** A box-shaped part of the house: a storey, a wing, a garage. */
+/**
+ * A foundation under part of the house. basement: walls down to a slab at the bottom.
+ * slab: a slab on grade, its top at the top of the walls, on a perimeter frost wall.
+ */
+export interface Foundation {
+  type: 'basement' | 'slab';
+  /** Thickness of the foundation walls. */
+  wall: Dim;
+  /** Thickness of the concrete slab. */
+  slab: Dim;
+}
+
+/**
+ * A box-shaped part of the house: a storey, a wing, a garage, or (with `foundation`)
+ * a foundation below it, whose base is the bottom of its walls and whose top is the top of its walls.
+ */
 export interface Block {
   id: string;
   name: string;
@@ -68,6 +83,7 @@ export interface Block {
   /** Wall height, from the base to the top of the walls (where the roof starts). */
   height: Dim;
   roof: Roof;
+  foundation?: Foundation;
 }
 
 export type OpeningKind = 'window' | 'door' | 'patio-door' | 'garage-door';
@@ -93,7 +109,7 @@ export interface DraftLevel {
 }
 
 /** The plan views the draft is checked against, one at a time. */
-export type ViewId = 'front' | 'back' | 'left' | 'right' | 'top' | 'ground' | 'first';
+export type ViewId = 'front' | 'back' | 'left' | 'right' | 'top' | 'basement' | 'ground' | 'first';
 
 export interface ExteriorDraft {
   /** Claude's short summary of what it drafted and what to double-check. */
@@ -111,6 +127,7 @@ export const VIEWS: { id: ViewId; name: string; plan: string[] }[] = [
   { id: 'right', name: 'Right elevation', plan: ['elevation-right'] },
   { id: 'back', name: 'Back elevation', plan: ['elevation-back'] },
   { id: 'left', name: 'Left elevation', plan: ['elevation-left'] },
+  { id: 'basement', name: 'Foundation plan', plan: ['basement'] },
   { id: 'ground', name: 'Ground floor plan', plan: ['ground-floor'] },
   { id: 'first', name: 'First floor plan', plan: ['first-floor'] },
   { id: 'top', name: 'Roof (top view)', plan: ['roof'] },
@@ -130,6 +147,11 @@ export const ROOF_NAMES: Record<RoofType, string> = {
   gable: 'Gable roof',
   hip: 'Hip roof',
   folded: 'Roof with a depression',
+};
+
+export const FOUNDATION_NAMES: Record<Foundation['type'], string> = {
+  basement: 'Basement',
+  slab: 'Slab on grade',
 };
 
 export function dim(mm: number, source: Source = 'user', ref?: string): Dim {

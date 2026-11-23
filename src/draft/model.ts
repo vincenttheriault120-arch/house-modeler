@@ -1,5 +1,5 @@
 import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, RoofPoint, ViewId } from './types';
-import { OPENING_NAMES, ROOF_NAMES, VIEWS } from './types';
+import { FOUNDATION_NAMES, OPENING_NAMES, ROOF_NAMES, VIEWS } from './types';
 
 /** A point in plan mm: x right, y toward the back, z up from grade. */
 export interface P3 {
@@ -34,7 +34,7 @@ export interface Measure {
 export interface DraftMesh {
   id: string;
   part: string;
-  kind: 'wall' | 'roof' | 'opening';
+  kind: 'wall' | 'roof' | 'opening' | 'foundation';
   name: string;
   /** x, y, z for each triangle corner. */
   positions: number[];
@@ -83,14 +83,22 @@ export function blocksOnFloor(draft: ExteriorDraft, view: 'ground' | 'first'): B
   const lvl = floorLevel(draft, view);
   const z =
     lvl ??
-    (view === 'ground' ? Math.min(...draft.blocks.map((b) => b.base.mm)) + 1000 : Math.max(...draft.blocks.map((b) => b.base.mm)) + 1000);
+    (view === 'ground' ? Math.min(...house(draft).map((b) => b.base.mm)) + 1000 : Math.max(...house(draft).map((b) => b.base.mm)) + 1000);
   // Cut a metre above the floor, like a floor plan.
   const cut = z + 1000;
-  return draft.blocks.filter((b) => b.base.mm <= cut && top(b) > cut);
+  return draft.blocks.filter((b) => !b.foundation && b.base.mm <= cut && top(b) > cut);
 }
 
 /** Which views a block shows in: every elevation, the roof, and the floor plans that cut it. */
+/** The volumes above the foundations. */
+export function house(draft: ExteriorDraft): Block[] {
+  return draft.blocks.filter((b) => !b.foundation);
+}
+
+export const foundationPart = (b: Block) => `${b.id}:foundation`;
+
 function blockViews(draft: ExteriorDraft, b: Block): { plan: ViewId[] } {
+  if (b.foundation) return { plan: ['basement'] };
   const plan: ViewId[] = ['top'];
   for (const v of ['ground', 'first'] as const) if (blocksOnFloor(draft, v).includes(b)) plan.push(v);
   return { plan };
@@ -131,6 +139,8 @@ export function measures(draft: ExteriorDraft): Measure[] {
   const box = bounds(draft);
   const midX = (box.x0 + box.x1) / 2;
   const n = draft.blocks.length;
+  // Dimension rows go under the lowest part, so they stay clear of the foundations.
+  const zLow = Math.min(0, ...draft.blocks.map((b) => b.base.mm));
 
   draft.blocks.forEach((b, i) => {
     const { plan } = blockViews(draft, b);
@@ -141,7 +151,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
     const zb = b.base.mm;
     const zt = top(b);
     // Widths run in a row under the front, depths under the left side, like the chains on a drawing.
-    const wz = -TIER * (i + 1);
+    const wz = zLow - TIER * (i + 1);
     const wy = box.y0 - GAP / 3;
     out.push({
       id: `${b.id}.width`,
@@ -158,7 +168,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
       ],
     });
     if (Math.abs(b.x.mm - box.x0) > 1) {
-      const z = -TIER * (n + i + 1);
+      const z = zLow - TIER * (n + i + 1);
       out.push({
         id: `${b.id}.x`,
         part: b.id,
@@ -186,7 +196,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
       ],
     });
     if (Math.abs(b.y.mm - box.y0) > 1) {
-      const z = -TIER * (n + i + 1);
+      const z = zLow - TIER * (n + i + 1);
       out.push({
         id: `${b.id}.y`,
         part: b.id,
@@ -208,7 +218,7 @@ export function measures(draft: ExteriorDraft): Measure[] {
       id: `${b.id}.height`,
       part: b.id,
       partName: b.name,
-      label: 'Wall height',
+      label: b.foundation ? 'Foundation wall height' : 'Wall height',
       dim: b.height,
       views: ELEVATIONS,
       a: { x: hx, y: hy, z: zb },
@@ -223,12 +233,40 @@ export function measures(draft: ExteriorDraft): Measure[] {
         id: `${b.id}.base`,
         part: b.id,
         partName: b.name,
-        label: 'Base above grade',
+        label: b.foundation ? 'Bottom of foundation walls (from grade)' : 'Base above grade',
         dim: b.base,
         views: ELEVATIONS,
         a: { x: hx, y: hy, z: 0 },
         b: { x: hx, y: hy, z: zb },
       });
+    }
+
+    if (b.foundation) {
+      const fp = foundationPart(b);
+      out.push({
+        id: `${fp}.wall`,
+        part: b.id,
+        partName: b.name,
+        label: 'Foundation wall thickness',
+        dim: b.foundation.wall,
+        views: ['basement'],
+        // Across the back wall, clear of the width and depth chains.
+        a: { x: (x0 + x1) / 2, y: y1 - b.foundation.wall.mm, z: zt },
+        b: { x: (x0 + x1) / 2, y: y1, z: zt },
+      });
+      const sz = b.foundation.type === 'basement' ? zb : zt - b.foundation.slab.mm;
+      const sx = leftSide ? x0 + 300 : x1 - 300;
+      out.push({
+        id: `${fp}.slab`,
+        part: b.id,
+        partName: b.name,
+        label: b.foundation.type === 'basement' ? 'Basement slab thickness' : 'Slab thickness',
+        dim: b.foundation.slab,
+        views: ELEVATIONS,
+        a: { x: sx, y: y0 - 150, z: sz },
+        b: { x: sx, y: y0 - 150, z: sz + b.foundation.slab.mm },
+      });
+      return;
     }
 
     // Roof
@@ -359,6 +397,15 @@ export function setDim(draft: ExteriorDraft, id: string, change: { mm?: number; 
     const same = Math.abs(mm - d.mm) < 0.5;
     return same ? { ...d, ok: change.ok ?? true } : { mm, source: 'user', ref: d.ref, ok: change.ok ?? true };
   };
+  if (owner.endsWith(':foundation')) {
+    const bid = owner.slice(0, -':foundation'.length);
+    return {
+      ...draft,
+      blocks: draft.blocks.map((b) =>
+        b.id === bid && b.foundation && (field === 'wall' || field === 'slab') ? { ...b, foundation: { ...b.foundation, [field]: patch(b.foundation[field]) } } : b,
+      ),
+    };
+  }
   if (owner.endsWith(':roof')) {
     const bid = owner.slice(0, -5);
     return {
@@ -582,9 +629,41 @@ function foldedTriangles(b: Block): number[] {
   return out;
 }
 
+/** Foundation walls all around, with the slab at the bottom (basement) or the top (slab on grade). */
+export function foundationTriangles(b: Block): number[] {
+  const f = b.foundation!;
+  const x0 = b.x.mm;
+  const x1 = x0 + b.width.mm;
+  const y0 = b.y.mm;
+  const y1 = y0 + b.depth.mm;
+  const z0 = b.base.mm;
+  const z1 = top(b);
+  const t = Math.max(50, Math.min(f.wall.mm, b.width.mm / 2, b.depth.mm / 2));
+  const s = Math.max(50, Math.min(f.slab.mm, z1 - z0));
+  return [
+    ...boxTriangles(x0, y0, z0, x1, y0 + t, z1),
+    ...boxTriangles(x0, y1 - t, z0, x1, y1, z1),
+    ...boxTriangles(x0, y0 + t, z0, x0 + t, y1 - t, z1),
+    ...boxTriangles(x1 - t, y0 + t, z0, x1, y1 - t, z1),
+    ...(f.type === 'basement'
+      ? boxTriangles(x0 + t, y0 + t, z0, x1 - t, y1 - t, z0 + s)
+      : boxTriangles(x0 + t, y0 + t, z1 - s, x1 - t, y1 - t, z1)),
+  ];
+}
+
 export function draftMeshes(draft: ExteriorDraft): DraftMesh[] {
   const out: DraftMesh[] = [];
   for (const b of draft.blocks) {
+    if (b.foundation) {
+      out.push({
+        id: b.id,
+        part: b.id,
+        kind: 'foundation',
+        name: `${FOUNDATION_NAMES[b.foundation.type]} · ${b.name}`,
+        positions: foundationTriangles(b),
+      });
+      continue;
+    }
     out.push({
       id: b.id,
       part: b.id,
