@@ -6,8 +6,30 @@ import type { Level, LevelKind } from '../model/levels';
 import { newId, reducer, supportOf } from '../model/project';
 import type { Project } from '../model/types';
 import { formatLength, parseLength, type UnitSystem } from '../units';
-import { measures as draftMeasures, placeOpening, removePart, setDim } from '../draft/model';
+import { facetLengths, measures as draftMeasures, placeOpening, removePart, roofFacets, setDim, type CornerLengths } from '../draft/model';
 import type { Block, Dim, Face, OpeningKind, RoofType } from '../draft/types';
+
+const FACETS = {
+  type: 'array',
+  description:
+    "Folded roofs: every flat region the roof plan draws inside this roof's outline, together covering the whole roof. Corners in order around each region: across = from the volume's left wall, back = from its front wall, height = above the top of its walls (0 at the lowest roof edge). Lengths are strings with units.",
+  items: {
+    type: 'object',
+    properties: {
+      corners: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { across: { type: 'string' }, back: { type: 'string' }, height: { type: 'string' } },
+          required: ['across', 'back', 'height'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['corners'],
+    additionalProperties: false,
+  },
+};
 
 const LENGTH = {
   type: 'string',
@@ -200,9 +222,11 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
         name: { type: 'string' },
         roof_type: {
           type: 'string',
-          enum: ['flat', 'parapet', 'shed', 'gable', 'hip'],
-          description: 'parapet = flat-topped outline with the roof surface inside sloping down toward low_side (a depression behind parapet walls).',
+          enum: ['flat', 'parapet', 'shed', 'gable', 'hip', 'folded'],
+          description:
+            'parapet = flat-topped walls all around with one roof plane inside sloping down toward low_side. folded = a roof made of several flat facets (e.g. a rectangle that dips along valley lines toward drains); give roof_facets with it.',
         },
+        roof_facets: FACETS,
         ridge_along: { type: 'string', enum: ['width', 'depth'], description: 'Gable or hip: the direction the ridge runs.' },
         low_side: { type: 'string', enum: ['front', 'back', 'left', 'right'], description: 'Shed or parapet: the side the roof slopes down toward.' },
       },
@@ -225,7 +249,8 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
         depth: LENGTH,
         base: { ...LENGTH, description: 'Bottom of the volume above grade. ' + LENGTH.description },
         wall_height: { ...LENGTH, description: 'Bottom of the volume to the top of its walls (shed/parapet: to the low edge of the roof). ' + LENGTH.description },
-        roof_type: { type: 'string', enum: ['flat', 'parapet', 'shed', 'gable', 'hip'] },
+        roof_type: { type: 'string', enum: ['flat', 'parapet', 'shed', 'gable', 'hip', 'folded'] },
+        roof_facets: FACETS,
         rise: { ...LENGTH, description: 'Ridge, high side or parapet top above the top of the walls; flat: roof thickness. ' + LENGTH.description },
         overhang: LENGTH,
         ridge_along: { type: 'string', enum: ['width', 'depth'] },
@@ -433,11 +458,25 @@ export function runTool(project: Project, name: string, input: Input): { project
   }
 }
 
-const ROOFS: RoofType[] = ['flat', 'parapet', 'shed', 'gable', 'hip'];
+const ROOFS: RoofType[] = ['flat', 'parapet', 'shed', 'gable', 'hip', 'folded'];
 const FACES: Face[] = ['front', 'back', 'left', 'right'];
 
 function rid() {
   return Math.random().toString(36).slice(2, 8);
+}
+
+/** Applies roof_facets from a tool call; a folded roof needs them. */
+function withFacets(b: Block, raw: unknown): Block {
+  if (raw === undefined) {
+    if (b.roof.type === 'folded' && !b.roof.facets?.length) throw new ToolInputError('A folded roof needs roof_facets.');
+    return b;
+  }
+  if (!Array.isArray(raw)) throw new ToolInputError('roof_facets must be a list');
+  const f = roofFacets(raw as { corners: CornerLengths[] }[], b.width.mm, b.roof.rise.mm, b.depth.mm, (s) =>
+    typeof s === 'string' ? parseLength(s, 'metric') : null,
+  );
+  if (!f) throw new ToolInputError('roof_facets: no facet could be read. Each needs 3 or more corners with across, back and height lengths.');
+  return { ...b, roof: { ...b.roof, type: 'folded', facets: f.facets, rise: { ...b.roof.rise, mm: f.rise, source: 'ai', ref: 'Set in chat' } } };
 }
 
 /** The exterior draft tools. Throws ToolInputError on bad input. */
@@ -466,7 +505,8 @@ function runDraftTool(project: Project, name: string, input: Input): { project: 
         ...(input.ridge_along ? { ridge: input.ridge_along === 'width' ? ('x' as const) : ('y' as const) } : {}),
         ...(input.low_side ? { low: input.low_side as Face } : {}),
       };
-      const next: Block = { ...b, roof, ...(typeof input.name === 'string' ? { name: input.name } : {}) };
+      let next: Block = { ...b, roof, ...(typeof input.name === 'string' ? { name: input.name } : {}) };
+      next = withFacets(next, input.roof_facets);
       return { project: { ...project, exterior: { ...draft, blocks: draft.blocks.map((x) => (x.id === b.id ? next : x)) } }, result: 'Updated.' };
     }
     case 'add_draft_volume': {
@@ -488,7 +528,8 @@ function runDraftTool(project: Project, name: string, input: Input): { project: 
           low: FACES.includes(input.low_side as Face) ? (input.low_side as Face) : 'left',
         },
       };
-      return { project: { ...project, exterior: { ...draft, blocks: [...draft.blocks, b] } }, result: `Added volume ${b.id}.` };
+      const added = withFacets(b, input.roof_facets);
+      return { project: { ...project, exterior: { ...draft, blocks: [...draft.blocks, added] } }, result: `Added volume ${added.id}.` };
     }
     case 'add_draft_opening': {
       if (!FACES.includes(input.elevation as Face)) throw new ToolInputError('elevation is invalid');
@@ -529,6 +570,7 @@ function describeDraft(project: Project, units: UnitSystem) {
       roof_type: b.roof.type,
       ridge_along: b.roof.ridge === 'x' ? 'width' : 'depth',
       low_side: b.roof.low,
+      ...(b.roof.type === 'folded' ? { roof_facets: facetLengths(b, f) } : {}),
     })),
     openings: d.openings.map((o) => ({ opening_id: o.id, volume_id: o.blockId, face: o.face, kind: o.kind })),
     measurements: draftMeasures(d).map((m) => ({

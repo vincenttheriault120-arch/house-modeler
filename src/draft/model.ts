@@ -1,4 +1,4 @@
-import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, ViewId } from './types';
+import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, RoofPoint, ViewId } from './types';
 import { OPENING_NAMES, ROOF_NAMES, VIEWS } from './types';
 
 /** A point in plan mm: x right, y toward the back, z up from grade. */
@@ -238,12 +238,25 @@ export function measures(draft: ExteriorDraft): Measure[] {
     if (r.type !== 'flat') {
       let rx = (x0 + x1) / 2;
       if (r.type === 'shed' || r.type === 'parapet') rx = r.low === 'left' ? x1 : r.low === 'right' ? x0 : rx;
-      const ry = y0 - r.overhang.mm - 150;
+      let ry = y0 - r.overhang.mm - 150;
+      const high = r.type === 'folded' ? highestPoint(r.facets) : null;
+      if (high) {
+        // Measure at the highest corner, set just outside the nearest wall.
+        rx = x0 + high.u * (x1 - x0);
+        ry = high.v > 0.5 ? y1 + 150 : y0 - 150;
+      }
       out.push({
         id: `${rp}.rise`,
         part: rp,
         partName: rname,
-        label: r.type === 'shed' ? 'Rise to the high side' : r.type === 'parapet' ? 'Parapet top above the low roof' : 'Rise to the ridge',
+        label:
+          r.type === 'shed'
+            ? 'Rise to the high side'
+            : r.type === 'parapet'
+              ? 'Parapet top above the low roof'
+              : r.type === 'folded'
+                ? 'Highest roof edge above the lowest'
+                : 'Rise to the ridge',
         dim: r.rise,
         views: ELEVATIONS,
         a: { x: rx, y: ry, z: zt },
@@ -427,6 +440,7 @@ export function roofTriangles(b: Block): number[] {
   const out: number[] = [];
   const p = (x: number, y: number, zz: number) => ({ x, y, z: zz });
   if (r.type === 'flat' || h < 1) return boxTriangles(x0, y0, z, x1, y1, z + Math.max(h, 200));
+  if (r.type === 'folded') return foldedTriangles(b);
   if (r.type === 'parapet') {
     // The roof inside slopes like a shed roof; the walls rise all around to its high side.
     const inner: Block = { ...b, roof: { ...r, type: 'shed', overhang: { ...r.overhang, mm: 0 } } };
@@ -488,6 +502,86 @@ export function roofTriangles(b: Block): number[] {
 }
 
 /** The whole draft as clay pieces: walls, roofs and openings. */
+export interface CornerLengths {
+  across: string;
+  back: string;
+  height: string;
+}
+
+/**
+ * Folded roof facets from corner lengths (across from the volume's left wall, back from its front wall,
+ * height above the wall top) to fractions of the volume. Facets with an unreadable corner are dropped.
+ * The rise grows to the highest corner if needed. Returns null if no facet is usable.
+ */
+export function roofFacets(
+  raw: { corners: CornerLengths[] }[],
+  width: number,
+  rise: number,
+  depth: number,
+  parse: (s: string) => number | null,
+): { facets: RoofPoint[][]; rise: number } | null {
+  const clamp = (n: number) => Math.min(1, Math.max(0, n));
+  const out: { u: number; v: number; h: number }[][] = [];
+  for (const f of raw) {
+    const pts = f.corners.map((c) => {
+      const x = parse(c.across);
+      const y = parse(c.back);
+      const h = parse(c.height);
+      return x === null || y === null || h === null ? null : { u: clamp(x / width), v: clamp(y / depth), h: Math.max(0, h) };
+    });
+    if (pts.length >= 3 && pts.every((p) => p)) out.push(pts as { u: number; v: number; h: number }[]);
+  }
+  if (!out.length) return null;
+  const r = Math.max(rise, ...out.flat().map((p) => p.h)) || 1;
+  return { facets: out.map((f) => f.map((p) => ({ u: p.u, v: p.v, t: p.h / r }))), rise: r };
+}
+
+/** A folded roof's facets back as lengths, for showing them to Claude. */
+export function facetLengths(b: Block, fmt: (mm: number) => string): { corners: CornerLengths[] }[] {
+  return (b.roof.facets ?? []).map((f) => ({
+    corners: f.map((p) => ({ across: fmt(p.u * b.width.mm), back: fmt(p.v * b.depth.mm), height: fmt(p.t * b.roof.rise.mm) })),
+  }));
+}
+
+function highestPoint(facets: RoofPoint[][] | undefined): RoofPoint | null {
+  let best: RoofPoint | null = null;
+  for (const f of facets ?? []) for (const p of f) if (!best || p.t > best.t) best = p;
+  return best;
+}
+
+/**
+ * A roof made of flat facets. Each facet is filled as a fan; walls are filled up from the
+ * wall top to every facet edge that lies along an outside wall, so the walls follow the roof.
+ */
+function foldedTriangles(b: Block): number[] {
+  const out: number[] = [];
+  const facets = b.roof.facets ?? [];
+  const z = top(b);
+  const h = Math.max(0, b.roof.rise.mm);
+  const at = (q: RoofPoint): P3 => ({ x: b.x.mm + q.u * b.width.mm, y: b.y.mm + q.v * b.depth.mm, z: z + q.t * h });
+  const foot = (q: RoofPoint): P3 => ({ ...at(q), z });
+  const E = 0.01;
+  const onSameWall = (p: RoofPoint, q: RoofPoint) =>
+    (Math.abs(p.u) < E && Math.abs(q.u) < E) ||
+    (Math.abs(p.u - 1) < E && Math.abs(q.u - 1) < E) ||
+    (Math.abs(p.v) < E && Math.abs(q.v) < E) ||
+    (Math.abs(p.v - 1) < E && Math.abs(q.v - 1) < E);
+  for (const f of facets) {
+    if (f.length < 3) continue;
+    const pts = f.map(at);
+    for (let i = 1; i + 1 < pts.length; i++) tri(out, pts[0], pts[i], pts[i + 1]);
+    for (let i = 0; i < f.length; i++) {
+      const p = f[i];
+      const q = f[(i + 1) % f.length];
+      if (!onSameWall(p, q) || (p.t < E && q.t < E)) continue;
+      if (p.t < E) tri(out, foot(p), foot(q), at(q));
+      else if (q.t < E) tri(out, foot(p), foot(q), at(p));
+      else quad(out, foot(p), foot(q), at(q), at(p));
+    }
+  }
+  return out;
+}
+
 export function draftMeshes(draft: ExteriorDraft): DraftMesh[] {
   const out: DraftMesh[] = [];
   for (const b of draft.blocks) {

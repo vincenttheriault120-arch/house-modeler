@@ -74,4 +74,25 @@ describe('exterior draft tools', () => {
     expect(r.project.exterior!.openings).toHaveLength(0);
     expect(runTool(base, 'set_draft_values', { changes: [{ id: 'nope', value: '1"' }] }).isError).toBe(true);
   });
+
+  it('gives a volume a roof with a depression', () => {
+    expect(runTool(base, 'update_draft_volume', { volume_id: 'main', roof_type: 'folded' }).isError).toBe(true);
+    const c = (across: string, back: string, height: string) => ({ across, back, height });
+    const r = runTool(base, 'update_draft_volume', {
+      volume_id: 'main',
+      roof_type: 'folded',
+      roof_facets: [
+        { corners: [c('0"', '0"', '0"'), c(`5' 0"`, '0"', '0"'), c(`5' 0"`, `26' 0"`, '0"'), c('0"', `26' 0"`, '0"')] },
+        { corners: [c(`5' 0"`, '0"', '0"'), c(`20' 0"`, '0"', `3' 9"`), c(`20' 0"`, `26' 0"`, `3' 9"`), c(`5' 0"`, `26' 0"`, '0"')] },
+      ],
+    });
+    expect(r.isError).toBe(false);
+    const roof = r.project.exterior!.blocks[0].roof;
+    expect(roof.type).toBe('folded');
+    expect(roof.facets).toHaveLength(2);
+    expect(roof.rise.mm).toBeCloseTo(7 * FT);
+    expect(roof.facets![1][1]).toMatchObject({ u: 1, v: 0 });
+    expect(roof.facets![1][1].t).toBeCloseTo((3 * FT + 9 * 25.4) / (7 * FT));
+    expect(describeProject(r.project, 'imperial')).toContain('roof_facets');
+  });
 });
