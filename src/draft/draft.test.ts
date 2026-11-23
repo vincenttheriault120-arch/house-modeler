@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerToDraft, type DraftAnswer } from './generate';
+import { answerToDraft, draftProblems, placeOpening, type DraftAnswer } from './generate';
 import { blocksOnFloor, confirmView, draftMeshes, measures, measuresFor, removePart, setDim, viewProgress } from './model';
 import { draftFromSteps } from './fromSteps';
 import { emptyProject } from '../model/types';
@@ -36,8 +36,8 @@ const answer: DraftAnswer = {
     },
   ],
   openings: [
-    { volume: 'Main', face: 'front', kind: 'door', offset: v("15' 9\"", false), sill: v("2' 7\""), width: v("3' 0\""), height: v("7' 0\"") },
-    { volume: 'Nowhere', face: 'front', kind: 'window', offset: v('0"'), sill: v('0"'), width: v('1"'), height: v('1"') },
+    { elevation: 'front', kind: 'door', from_left: v("15' 9\"", false), bottom: v("2' 7\""), width: v("3' 0\""), height: v("7' 0\"") },
+    { elevation: 'front', kind: 'window', from_left: v("100' 0\""), bottom: v('0"'), width: v('1"'), height: v('1"') },
   ],
 };
 
@@ -98,6 +98,39 @@ describe('exterior draft', () => {
       expect(m.positions.length % 9).toBe(0);
       expect(m.positions.every(Number.isFinite)).toBe(true);
     }
+  });
+
+  it('places an opening read on an elevation on the wall nearest the viewer', () => {
+    const door = d.openings[0];
+    expect(door.blockId).toBe(d.blocks[0].id);
+    expect(door.offset.mm).toBeCloseTo(15 * FT + 9 * 25.4);
+    // Seen from the right, 10' from the left end (the front): the upper volume's right wall, 4' from its own front.
+    const r = placeOpening(d, 'right', 10 * FT, 12 * FT, 3 * FT)!;
+    expect(r.blockId).toBe(d.blocks[1].id);
+    expect(r.offset).toBeCloseTo(4 * FT);
+    expect(r.sill).toBeCloseTo(12 * FT - (10 * FT + 9 * 25.4));
+    // Seen from the back, the left end is the house's right side.
+    const b = placeOpening(d, 'back', 2 * FT, 12 * FT, 3 * FT)!;
+    expect(b.blockId).toBe(d.blocks[1].id);
+    expect(b.offset).toBeCloseTo(2 * FT);
+    // Seen from the left, at grade near the front: the main house.
+    const l = placeOpening(d, 'left', 40 * FT, 3 * FT, 3 * FT)!;
+    expect(l.blockId).toBe(d.blocks[0].id);
+  });
+
+  it('reports what cannot be right', () => {
+    const p = draftProblems(d, answer);
+    expect(p.some((x) => /don't land/.test(x))).toBe(true);
+    const overlap = { ...d, blocks: [d.blocks[0], { ...d.blocks[0], id: 'copy', name: 'Copy' }] };
+    expect(draftProblems(overlap).some((x) => /overlap/.test(x))).toBe(true);
+  });
+
+  it('draws a roof behind parapets', () => {
+    const b = { ...d.blocks[1], roof: { ...d.blocks[1].roof, type: 'parapet' as const } };
+    const m = draftMeshes({ ...d, blocks: [b], openings: [] });
+    const roof = m.find((x) => x.kind === 'roof')!;
+    const zs = roof.positions.filter((_, i) => i % 3 === 2);
+    expect(Math.max(...zs)).toBeCloseTo(10 * FT + 9 * 25.4 + 7 * FT + 10 * 25.4 + 3 * FT + 9 * 25.4);
   });
 
   it('removes a volume with its openings', () => {

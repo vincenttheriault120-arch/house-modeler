@@ -6,6 +6,8 @@ import type { Level, LevelKind } from '../model/levels';
 import { newId, reducer, supportOf } from '../model/project';
 import type { Project } from '../model/types';
 import { formatLength, parseLength, type UnitSystem } from '../units';
+import { measures as draftMeasures, placeOpening, removePart, setDim } from '../draft/model';
+import type { Block, Dim, Face, OpeningKind, RoofType } from '../draft/types';
 
 const LENGTH = {
   type: 'string',
@@ -165,6 +167,104 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'set_draft_values',
+    description:
+      'Change measurements of the Phase 1 exterior draft, by measurement id (from exterior_draft.measurements). The new value becomes the person\'s own (black) and counts as checked.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        changes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { id: { type: 'string' }, value: LENGTH },
+            required: ['id', 'value'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['changes'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'update_draft_volume',
+    description: 'Change a volume of the exterior draft: its name or its roof shape. Use set_draft_values for its measurements.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        volume_id: { type: 'string' },
+        name: { type: 'string' },
+        roof_type: {
+          type: 'string',
+          enum: ['flat', 'parapet', 'shed', 'gable', 'hip'],
+          description: 'parapet = flat-topped outline with the roof surface inside sloping down toward low_side (a depression behind parapet walls).',
+        },
+        ridge_along: { type: 'string', enum: ['width', 'depth'], description: 'Gable or hip: the direction the ridge runs.' },
+        low_side: { type: 'string', enum: ['front', 'back', 'left', 'right'], description: 'Shed or parapet: the side the roof slopes down toward.' },
+      },
+      required: ['volume_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'add_draft_volume',
+    description:
+      'Add a box-shaped volume to the exterior draft (x from the house\'s leftmost wall, y back from its frontmost wall, heights above grade). Volumes must not overlap; to replace one, remove it first. Its values show in red until the person checks them.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        x: LENGTH,
+        y: LENGTH,
+        width: LENGTH,
+        depth: LENGTH,
+        base: { ...LENGTH, description: 'Bottom of the volume above grade. ' + LENGTH.description },
+        wall_height: { ...LENGTH, description: 'Bottom of the volume to the top of its walls (shed/parapet: to the low edge of the roof). ' + LENGTH.description },
+        roof_type: { type: 'string', enum: ['flat', 'parapet', 'shed', 'gable', 'hip'] },
+        rise: { ...LENGTH, description: 'Ridge, high side or parapet top above the top of the walls; flat: roof thickness. ' + LENGTH.description },
+        overhang: LENGTH,
+        ridge_along: { type: 'string', enum: ['width', 'depth'] },
+        low_side: { type: 'string', enum: ['front', 'back', 'left', 'right'] },
+      },
+      required: ['name', 'x', 'y', 'width', 'depth', 'base', 'wall_height', 'roof_type', 'rise'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'add_draft_opening',
+    description:
+      'Add a door or window to the exterior draft, placed as seen on an elevation drawing: from_left = from the left end of the house as drawn on that elevation, bottom = above grade. It goes on the wall nearest the viewer at that spot.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        elevation: { type: 'string', enum: ['front', 'back', 'left', 'right'] },
+        kind: { type: 'string', enum: ['window', 'door', 'patio-door', 'garage-door'] },
+        from_left: LENGTH,
+        bottom: LENGTH,
+        width: LENGTH,
+        height: LENGTH,
+      },
+      required: ['elevation', 'kind', 'from_left', 'bottom', 'width', 'height'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'remove_draft_part',
+    description: 'Remove a volume (with its doors and windows) or a single door or window from the exterior draft, by its id.',
+    eager_input_streaming: true,
+    input_schema: {
+      type: 'object',
+      properties: { part_id: { type: 'string' } },
+      required: ['part_id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Input = Record<string, unknown>;
@@ -269,7 +369,9 @@ export function runTool(project: Project, name: string, input: Input): { project
     }
     if (typeof input.top_level_id === 'string' && input.top_level_id !== '' && !project.levels.some((l) => l.id === input.top_level_id))
       throw new ToolInputError(`No level with id "${input.top_level_id}"`);
-    if (name !== 'add_foundation_step' && name !== 'add_floor_step' && !step) throw new ToolInputError(`No step with id "${input.step_id}"`);
+    if (name !== 'add_foundation_step' && name !== 'add_floor_step' && !name.includes('draft') && !step) throw new ToolInputError(`No step with id "${input.step_id}"`);
+
+    if (name.includes('draft')) return { ...runDraftTool(project, name, input), isError: false };
 
     switch (name) {
       case 'add_foundation_step': {
@@ -331,12 +433,123 @@ export function runTool(project: Project, name: string, input: Input): { project
   }
 }
 
+const ROOFS: RoofType[] = ['flat', 'parapet', 'shed', 'gable', 'hip'];
+const FACES: Face[] = ['front', 'back', 'left', 'right'];
+
+function rid() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+/** The exterior draft tools. Throws ToolInputError on bad input. */
+function runDraftTool(project: Project, name: string, input: Input): { project: Project; result: string } {
+  let draft = project.exterior;
+  if (!draft) throw new ToolInputError('There is no exterior draft yet. The person can make one in Phase 1 (Draft the exterior).');
+  const ai = (mm: number): Dim => ({ mm, source: 'ai', ref: 'Set in chat' });
+  switch (name) {
+    case 'set_draft_values': {
+      if (!Array.isArray(input.changes)) throw new ToolInputError('changes must be a list');
+      const ids = new Set(draftMeasures(draft).map((m) => m.id));
+      for (const [i, c] of (input.changes as Input[]).entries()) {
+        if (typeof c.id !== 'string' || !ids.has(c.id)) throw new ToolInputError(`changes[${i}]: no measurement with id "${c.id}"`);
+        draft = setDim(draft, c.id, { mm: len(c.value, `changes[${i}].value`) });
+      }
+      return { project: { ...project, exterior: draft }, result: `Changed ${(input.changes as unknown[]).length} measurement(s).` };
+    }
+    case 'update_draft_volume': {
+      const b = draft.blocks.find((x) => x.id === input.volume_id);
+      if (!b) throw new ToolInputError(`No volume with id "${input.volume_id}"`);
+      if (input.roof_type !== undefined && !ROOFS.includes(input.roof_type as RoofType)) throw new ToolInputError('roof_type is invalid');
+      if (input.low_side !== undefined && !FACES.includes(input.low_side as Face)) throw new ToolInputError('low_side is invalid');
+      const roof = {
+        ...b.roof,
+        ...(input.roof_type ? { type: input.roof_type as RoofType } : {}),
+        ...(input.ridge_along ? { ridge: input.ridge_along === 'width' ? ('x' as const) : ('y' as const) } : {}),
+        ...(input.low_side ? { low: input.low_side as Face } : {}),
+      };
+      const next: Block = { ...b, roof, ...(typeof input.name === 'string' ? { name: input.name } : {}) };
+      return { project: { ...project, exterior: { ...draft, blocks: draft.blocks.map((x) => (x.id === b.id ? next : x)) } }, result: 'Updated.' };
+    }
+    case 'add_draft_volume': {
+      if (!ROOFS.includes(input.roof_type as RoofType)) throw new ToolInputError('roof_type is invalid');
+      const b: Block = {
+        id: `vol-${rid()}`,
+        name: String(input.name),
+        x: ai(len(input.x, 'x')),
+        y: ai(len(input.y, 'y')),
+        width: ai(len(input.width, 'width')),
+        depth: ai(len(input.depth, 'depth')),
+        base: ai(len(input.base, 'base')),
+        height: ai(len(input.wall_height, 'wall_height')),
+        roof: {
+          type: input.roof_type as RoofType,
+          rise: ai(len(input.rise, 'rise')),
+          overhang: ai(input.overhang === undefined ? 0 : len(input.overhang, 'overhang')),
+          ridge: input.ridge_along === 'width' ? 'x' : 'y',
+          low: FACES.includes(input.low_side as Face) ? (input.low_side as Face) : 'left',
+        },
+      };
+      return { project: { ...project, exterior: { ...draft, blocks: [...draft.blocks, b] } }, result: `Added volume ${b.id}.` };
+    }
+    case 'add_draft_opening': {
+      if (!FACES.includes(input.elevation as Face)) throw new ToolInputError('elevation is invalid');
+      const width = len(input.width, 'width');
+      const at = placeOpening(draft, input.elevation as Face, len(input.from_left, 'from_left'), len(input.bottom, 'bottom'), width);
+      if (!at) throw new ToolInputError('That spot is not on any wall of the draft on that elevation.');
+      const o = {
+        id: `op-${rid()}`,
+        blockId: at.blockId,
+        face: input.elevation as Face,
+        kind: (['window', 'door', 'patio-door', 'garage-door'].includes(input.kind as string) ? input.kind : 'window') as OpeningKind,
+        offset: ai(at.offset),
+        sill: ai(at.sill),
+        width: ai(width),
+        height: ai(len(input.height, 'height')),
+      };
+      return { project: { ...project, exterior: { ...draft, openings: [...draft.openings, o] } }, result: `Added opening ${o.id} on volume ${at.blockId}.` };
+    }
+    case 'remove_draft_part': {
+      const id = String(input.part_id);
+      if (!draft.blocks.some((b) => b.id === id) && !draft.openings.some((o) => o.id === id)) throw new ToolInputError(`No volume or opening with id "${id}"`);
+      return { project: { ...project, exterior: removePart(draft, id) }, result: 'Removed.' };
+    }
+    default:
+      throw new ToolInputError(`Unknown tool ${name}`);
+  }
+}
+
+/** The exterior draft as Claude sees it. */
+function describeDraft(project: Project, units: UnitSystem) {
+  const d = project.exterior;
+  if (!d) return undefined;
+  const f = (mm: number) => formatLength(mm, units);
+  return {
+    volumes: d.blocks.map((b) => ({
+      volume_id: b.id,
+      name: b.name,
+      roof_type: b.roof.type,
+      ridge_along: b.roof.ridge === 'x' ? 'width' : 'depth',
+      low_side: b.roof.low,
+    })),
+    openings: d.openings.map((o) => ({ opening_id: o.id, volume_id: o.blockId, face: o.face, kind: o.kind })),
+    measurements: draftMeasures(d).map((m) => ({
+      id: m.id,
+      part: m.partName,
+      label: m.label,
+      value: f(m.dim.mm),
+      source: m.dim.source === 'plan' ? 'from plans' : m.dim.source === 'ai' ? 'inferred (red)' : 'set by the person',
+      checked: !!m.dim.ok,
+    })),
+  };
+}
+
 /** The project as Claude sees it, with lengths written in the person's units. */
 export function describeProject(project: Project, units: UnitSystem): string {
   const f = (mm: number) => formatLength(mm, units);
   return JSON.stringify(
     {
       name: project.name,
+      phase: project.phase ?? 1,
+      exterior_draft: describeDraft(project, units),
       levels: project.levels.map((l) => ({ level_id: l.id, name: l.name, kind: l.kind, elevation: f(l.elevation) })),
       steps: project.steps.map((s, i) => {
         const base = {

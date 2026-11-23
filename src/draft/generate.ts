@@ -4,6 +4,8 @@ import * as z from 'zod/v4';
 import { MODEL } from '../chat/claude';
 import { getPlanData, PLAN_KINDS, type PlanMeta } from '../plans/store';
 import { parseLength, type UnitSystem } from '../units';
+import { draftProblems, placeOpening } from './model';
+export { draftProblems, placeOpening };
 import type { Block, Dim, DraftLevel, ExteriorDraft, Face, Opening, OpeningKind, RoofType } from './types';
 
 const Value = z.object({
@@ -30,28 +32,39 @@ export const DraftSchema = z.object({
         width: Value.describe('Outside width, left to right as seen from the front.'),
         depth: Value.describe('Outside depth, front to back.'),
         base: Value.describe('Bottom of this volume above grade (0 if it starts at the ground; the floor height if it sits on another volume or cantilevers).'),
-        wall_height: Value.describe('From the bottom of the volume to the top of its walls, where the roof starts.'),
+        wall_height: Value.describe(
+          'From the bottom of the volume to the top of its walls where the roof starts (for shed and parapet roofs: up to the LOW edge of the roof surface).',
+        ),
         roof: z.object({
-          type: z.enum(['flat', 'shed', 'gable', 'hip']),
-          rise: Value.describe('Top of walls to ridge (gable, hip) or to the high side (shed). For a flat roof: roof thickness or parapet height.'),
+          type: z
+            .enum(['flat', 'parapet', 'shed', 'gable', 'hip'])
+            .describe(
+              'parapet = the outline on the elevations is a flat-topped box, but the roof surface inside it slopes down (a depression behind parapet walls). Use it instead of shed when the elevations show a flat top line with a sloping roof line drawn inside it.',
+            ),
+          rise: Value.describe(
+            'Top of walls to ridge (gable, hip), to the high side (shed), or to the top of the parapet (parapet). For a flat roof: roof thickness.',
+          ),
           overhang: Value.describe('How far the roof extends past the walls. 0 if flush.'),
           ridge_along: z.enum(['width', 'depth']).describe('Gable or hip: the direction the ridge runs.'),
-          low_side: z.enum(FACES).describe('Shed: the side the roof slopes down toward.'),
+          low_side: z.enum(FACES).describe('Shed or parapet: the side the roof surface slopes down toward.'),
         }),
       }),
     )
     .describe('The house as non-overlapping boxes, bottom to top. Split it wherever the outline, height or roof changes (an addition, a garage, an upper storey that cantilevers).'),
-  openings: z.array(
-    z.object({
-      volume: z.string().describe('The name of the volume whose wall it is in, exactly as above.'),
-      face: z.enum(FACES).describe('Which side of the house it is on.'),
-      kind: z.enum(['window', 'door', 'patio-door', 'garage-door']),
-      offset: Value.describe("From the left end of that volume's wall, as seen standing outside facing that wall, to the left edge of the opening."),
-      sill: Value.describe("Bottom of the opening above the bottom of the volume (0 for a door at the volume's floor)."),
-      width: Value,
-      height: Value,
-    }),
-  ),
+  openings: z
+    .array(
+      z.object({
+        elevation: z.enum(FACES).describe('The elevation drawing it is seen on (front, back, left or right).'),
+        kind: z.enum(['window', 'door', 'patio-door', 'garage-door']),
+        from_left: Value.describe(
+          "Measured ON THAT ELEVATION SHEET, as drawn: from the left end of the whole house's outline on that sheet to the left edge of the opening.",
+        ),
+        bottom: Value.describe('Bottom of the opening above average GRADE (not above a floor).'),
+        width: Value,
+        height: Value,
+      }),
+    )
+    .describe('Every door, window, patio door and garage door visible on the four elevations, placed as drawn on each elevation.'),
 });
 export type DraftAnswer = z.infer<typeof DraftSchema>;
 
@@ -69,7 +82,13 @@ Volumes:
 - Exclude decks, steps, terraces, foundations below grade and small canopies.
 - Roof rise: for hip and gable roofs the ridge height is often not dimensioned; scale it from the elevations and say so.
 
-Openings: list every door, window, patio door and garage door visible on the four elevations, on the volume and face it belongs to. Use the window and door sizes written on plans (e.g. "36\\"x84\\"" = 36" wide by 84" high, "84\\"x84\\"" a patio door) when given; otherwise scale them from the elevation.
+How to work, in this order:
+1. Footprints (x, y, width, depth) from the roof plan and the floor plans, using the written chain dimensions. A storey that sticks out past the one below (a cantilever) or is set back is its own volume.
+2. Heights from the elevations and sections: convert every level to grade = 0, then base and wall_height of each volume.
+3. Cross-check every volume on EVERY elevation where it shows. Where an elevation draws one continuous wall (one rectangle, one cladding), the volumes behind it must line up exactly there (same x or y edge, same top). Fix the numbers until each elevation's outline matches the drawing.
+4. Roofs: read their shape on the elevations AND the roof plan (arrows show slope direction). A flat-topped outline with a sloping line inside is a parapet roof, not a shed roof.
+
+Openings: list every door, window, patio door and garage door visible on the four elevations, placed exactly as you see them on that elevation sheet: from_left = distance from the left end of the house's outline on that sheet, bottom = height above grade. Use the window and door sizes written on plans (e.g. "36\"x84\"" = 36" wide by 84" high) when given; otherwise scale them from the elevation using its written dimensions.
 
 Sourcing (this is shown to the homeowner in black or red):
 - from_plans = true only when the number is written on a drawing or is the plain difference of two written levels or a sum of written chain dimensions.
@@ -84,15 +103,10 @@ function toBase64(buf: ArrayBuffer): string {
 }
 
 /** Ask Claude to draft the exterior from all the plans at once. */
-export async function generateDraft(opts: {
-  apiKey: string;
-  plans: PlanMeta[];
-  units: UnitSystem;
-  signal?: AbortSignal;
-  onProgress?: (chars: number) => void;
-}): Promise<ExteriorDraft> {
+/** The plan PDFs as document blocks, the last one marked for caching so follow-up calls reuse them. */
+export async function planDocumentBlocks(plans: PlanMeta[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
-  for (const plan of opts.plans) {
+  for (const plan of plans) {
     const data = await getPlanData(plan.id);
     if (!data) continue;
     const kind = PLAN_KINDS.find((k) => k.value === plan.kind)?.label ?? plan.kind;
@@ -102,12 +116,61 @@ export async function generateDraft(opts: {
       title: `${plan.name} (${kind})`,
     });
   }
+  const last = content.at(-1);
+  if (last && last.type === 'document') last.cache_control = { type: 'ephemeral' };
+  return content;
+}
+
+/** Ask Claude to draft the exterior from all the plans at once, then check its own draft once. */
+export async function generateDraft(opts: {
+  apiKey: string;
+  plans: PlanMeta[];
+  units: UnitSystem;
+  signal?: AbortSignal;
+  onProgress?: (chars: number, stage: 'draft' | 'check') => void;
+}): Promise<ExteriorDraft> {
+  const content = await planDocumentBlocks(opts.plans);
   if (content.length === 0) throw new Error('No plan PDFs could be read from this project.');
   content.push({
     type: 'text',
     text: `Units: ${opts.units === 'imperial' ? 'feet-inches' : 'millimetres'}.\n\nDraft the whole exterior of this house from the attached drawings.`,
   });
   const client = new Anthropic({ apiKey: opts.apiKey, dangerouslyAllowBrowser: true });
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content }];
+  let answer = await draftCall(client, messages, opts, 'draft');
+  let draft = answerToDraft(answer, opts.units);
+  const problems = draftProblems(draft, answer);
+  if (problems.length) {
+    // One correction pass: show Claude what doesn't add up, with the plans still attached.
+    messages.push(
+      { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(answer) }] },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Checking your draft against itself found these problems:\n- ${problems.join('\n- ')}\n\nLook at the drawings again, fix these and anything else you now see is off (especially where an elevation shows one continuous wall), and return the complete corrected draft.`,
+          },
+        ],
+      },
+    );
+    try {
+      answer = await draftCall(client, messages, opts, 'check');
+      draft = answerToDraft(answer, opts.units);
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      // Keep the first draft if the correction fails.
+    }
+  }
+  return draft;
+}
+
+async function draftCall(
+  client: Anthropic,
+  messages: Anthropic.Beta.BetaMessageParam[],
+  opts: { signal?: AbortSignal; onProgress?: (chars: number, stage: 'draft' | 'check') => void },
+  stage: 'draft' | 'check',
+): Promise<DraftAnswer> {
   const stream = client.beta.messages.stream(
     {
       model: MODEL,
@@ -117,7 +180,7 @@ export async function generateDraft(opts: {
       output_config: { effort: 'high', format: betaZodOutputFormat(DraftSchema) },
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      messages: [{ role: 'user', content }],
+      messages,
     },
     { signal: opts.signal },
   );
@@ -125,14 +188,14 @@ export async function generateDraft(opts: {
   stream.on('streamEvent', (e) => {
     if (e.type === 'content_block_delta') {
       chars += e.delta.type === 'text_delta' ? e.delta.text.length : e.delta.type === 'thinking_delta' ? e.delta.thinking.length : 0;
-      opts.onProgress?.(chars);
+      opts.onProgress?.(chars, stage);
     }
   });
   const response = await stream.finalMessage();
   if (response.stop_reason === 'refusal') throw new Error('Claude declined to read these plans.');
   if (response.stop_reason === 'max_tokens') throw new Error('The draft was cut off. Try again.');
   if (!response.parsed_output) throw new Error("Claude's draft couldn't be read. Try again.");
-  return answerToDraft(response.parsed_output as DraftAnswer, opts.units);
+  return response.parsed_output as DraftAnswer;
 }
 
 function id(prefix: string, i: number) {
@@ -169,23 +232,26 @@ export function answerToDraft(a: DraftAnswer, units: UnitSystem): ExteriorDraft 
       low: v.roof.low_side as Face,
     },
   }));
-  const byName = new Map(a.volumes.map((v, i) => [v.name.trim().toLowerCase(), blocks[i]]));
+  const base = normalize({ summary: a.summary, createdAt: Date.now(), levels, blocks, openings: [] });
   const openings: Opening[] = [];
   a.openings.forEach((o, i) => {
-    const b = byName.get(o.volume.trim().toLowerCase());
-    if (!b) return;
+    const width = d(o.width, 1);
+    const fromLeft = d(o.from_left, 0);
+    const bottom = d(o.bottom);
+    const at = placeOpening(base, o.elevation as Face, fromLeft.mm, bottom.mm, width.mm);
+    if (!at) return;
     openings.push({
       id: id('op', i),
-      blockId: b.id,
-      face: o.face as Face,
+      blockId: at.blockId,
+      face: o.elevation as Face,
       kind: o.kind as OpeningKind,
-      offset: d(o.offset, 0),
-      sill: d(o.sill, 0),
-      width: d(o.width, 1),
+      offset: { ...fromLeft, mm: at.offset },
+      sill: { ...bottom, mm: at.sill },
+      width,
       height: d(o.height, 1),
     });
   });
-  return normalize({ summary: a.summary, createdAt: Date.now(), levels, blocks, openings });
+  return { ...base, openings };
 }
 
 /** Shift everything so the house's front-left corner sits at 0, 0. */
